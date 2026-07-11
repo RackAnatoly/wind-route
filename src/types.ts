@@ -16,11 +16,13 @@ export interface WindForecast {
   time: string; // ISO hour
   speed: number; // км/ч
   direction: number; // градусы, откуда дует
+  precipitation: number; // мм/ч
 }
 
 export interface ScoredSegment extends Segment {
   windSpeed: number; // км/ч, на момент прохождения сегмента
   windDirection: number; // градусы, откуда дует
+  precipitation: number; // мм/ч, на момент прохождения сегмента
   headwindComponent: number; // положительное = headwind, отрицательное = tailwind, км/ч
 }
 

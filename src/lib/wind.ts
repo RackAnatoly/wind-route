@@ -13,6 +13,7 @@ interface OpenMeteoResponse {
     time: string[];
     windspeed_10m: number[];
     winddirection_10m: number[];
+    precipitation: number[];
   };
 }
 
@@ -23,7 +24,10 @@ async function fetchPointForecast(
   const url = new URL(OPEN_METEO_URL);
   url.searchParams.set("latitude", lat.toFixed(5));
   url.searchParams.set("longitude", lon.toFixed(5));
-  url.searchParams.set("hourly", "windspeed_10m,winddirection_10m");
+  url.searchParams.set(
+    "hourly",
+    "windspeed_10m,winddirection_10m,precipitation",
+  );
   url.searchParams.set("windspeed_unit", "kmh");
   url.searchParams.set("forecast_days", "2");
   url.searchParams.set("timezone", "auto");
@@ -36,12 +40,13 @@ async function fetchPointForecast(
   }
 
   const data = (await res.json()) as OpenMeteoResponse;
-  const { time, windspeed_10m, winddirection_10m } = data.hourly;
+  const { time, windspeed_10m, winddirection_10m, precipitation } = data.hourly;
 
   return time.map((t, i) => ({
     time: t,
     speed: windspeed_10m[i],
     direction: winddirection_10m[i],
+    precipitation: precipitation[i],
   }));
 }
 

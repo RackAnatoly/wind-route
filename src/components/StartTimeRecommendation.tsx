@@ -1,3 +1,5 @@
+import { degToCompass } from "../lib/compass";
+import { formatExposure } from "../lib/format";
 import type { RouteScore } from "../types";
 
 interface StartTimeRecommendationProps {
@@ -21,8 +23,8 @@ export function StartTimeRecommendation({
   const bestExposure = bestScore.totalHeadwindExposure;
 
   const improvementPct =
-    nowExposure !== 0
-      ? ((nowExposure - bestExposure) / Math.abs(nowExposure)) * 100
+    nowExposure > 0
+      ? ((nowExposure - bestExposure) / nowExposure) * 100
       : 0;
 
   const worstSegments = [...bestScore.segments]
@@ -41,26 +43,27 @@ export function StartTimeRecommendation({
       ) : (
         <p>
           Лучшее время старта: <strong>{formatTime(bestScore.startTime)}</strong>
-          {improvementPct > 0 && (
+          {improvementPct > 1 && (
             <>
-              , суммарная headwind-экспозиция на{" "}
-              <strong>{improvementPct.toFixed(0)}%</strong> ниже, чем при старте
-              сейчас
+              {" "}— встречный ветер в среднем на{" "}
+              <strong>{improvementPct.toFixed(0)}%</strong> слабее, чем при
+              старте сейчас
             </>
           )}
         </p>
       )}
       <p>
-        Экспозиция сейчас: {nowExposure.toFixed(1)} км/ч · при рекомендуемом
-        старте: {bestExposure.toFixed(1)} км/ч
+        Сейчас: {formatExposure(nowExposure)} · при рекомендуемом старте:{" "}
+        {formatExposure(bestExposure)}
       </p>
       <h4>Худшие участки (при рекомендуемом старте)</h4>
       <ul>
         {worstSegments.map((s, i) => (
           <li key={i}>
             {(s.start.distanceFromStart / 1000).toFixed(1)}–
-            {(s.end.distanceFromStart / 1000).toFixed(1)} км: встречный{" "}
-            {s.headwindComponent.toFixed(1)} км/ч
+            {(s.end.distanceFromStart / 1000).toFixed(1)} км:{" "}
+            {formatExposure(s.headwindComponent)} (ветер {degToCompass(s.windDirection)}
+            , {s.windSpeed.toFixed(0)} км/ч)
           </li>
         ))}
       </ul>

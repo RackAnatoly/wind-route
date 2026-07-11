@@ -89,6 +89,7 @@ export function scoreRoute(
       ...segment,
       windSpeed: forecast.speed,
       windDirection: forecast.direction,
+      precipitation: forecast.precipitation,
       headwindComponent: headwind,
     };
   });
@@ -100,6 +101,15 @@ export function scoreRoute(
   };
 }
 
+// Возможные времена старта на ближайшие ~48ч (шаг 1ч, только будущее),
+// по временной сетке прогноза первой точки (все точки используют одну сетку часов).
+export function getCandidateStartTimes(windPoints: RouteWindPoint[]): Date[] {
+  const now = Date.now();
+  return windPoints[0].forecasts
+    .map((f) => new Date(f.time))
+    .filter((t) => t.getTime() >= now);
+}
+
 // Перебирает времена старта на ближайшие 48ч (шаг 1ч, только будущее) и выбирает
 // вариант с минимальной суммарной headwind-экспозицией.
 export function findBestStartTime(
@@ -107,10 +117,7 @@ export function findBestStartTime(
   windPoints: RouteWindPoint[],
   avgSpeedKmh: number = DEFAULT_AVG_SPEED_KMH,
 ): RouteScore {
-  const now = Date.now();
-  const candidateTimes = windPoints[0].forecasts
-    .map((f) => new Date(f.time))
-    .filter((t) => t.getTime() >= now);
+  const candidateTimes = getCandidateStartTimes(windPoints);
 
   let best: RouteScore | null = null;
   for (const t of candidateTimes) {
@@ -121,4 +128,37 @@ export function findBestStartTime(
   }
 
   return best ?? scoreRoute(routePoints, windPoints, new Date(), avgSpeedKmh);
+}
+
+// Средние по маршруту скорость, направление ветра (циркулярное среднее) и осадки,
+// взвешенные по дистанции сегмента — для сводки на слайдере времени.
+export function summarizeWind(segments: ScoredSegment[]): {
+  avgSpeed: number;
+  avgDirection: number;
+  maxPrecipitation: number;
+} {
+  let sumX = 0;
+  let sumY = 0;
+  let speedSum = 0;
+  let totalDistance = 0;
+  let maxPrecipitation = 0;
+
+  for (const s of segments) {
+    const rad = (s.windDirection * Math.PI) / 180;
+    sumX += Math.cos(rad) * s.distance;
+    sumY += Math.sin(rad) * s.distance;
+    speedSum += s.windSpeed * s.distance;
+    totalDistance += s.distance;
+    maxPrecipitation = Math.max(maxPrecipitation, s.precipitation);
+  }
+
+  if (totalDistance === 0) return { avgSpeed: 0, avgDirection: 0, maxPrecipitation: 0 };
+
+  const avgDirection = (Math.atan2(sumY, sumX) * 180) / Math.PI;
+
+  return {
+    avgSpeed: speedSum / totalDistance,
+    avgDirection: (avgDirection + 360) % 360,
+    maxPrecipitation,
+  };
 }

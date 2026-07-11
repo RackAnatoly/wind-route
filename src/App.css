@@ -25,12 +25,6 @@
   color: #e5484d;
 }
 
-.display-toggle {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-}
-
 .start-time-recommendation ul {
   padding-left: 20px;
 }
