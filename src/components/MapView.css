@@ -105,3 +105,61 @@
   border: 2px solid #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
+
+.rider-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.rider-icon .rider-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f5a623;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+}
+
+.rider-icon .rider-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #7a4a00;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.map-legend .legend-radar {
+  margin-top: 6px;
+}
+
+.map-legend .legend-radar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.map-legend .legend-radar-row input {
+  width: 80px;
+}
+
+/* Цвета сняты с настоящего тайла RainViewer (color scheme 2). */
+.map-legend .legend-radar-scale {
+  height: 10px;
+  border-radius: 5px;
+  margin: 4px 0;
+  background: linear-gradient(
+    to right,
+    #88ddee,
+    #00a3e0,
+    #004768,
+    #ffee00,
+    #ff9500,
+    #cd0d00
+  );
+}

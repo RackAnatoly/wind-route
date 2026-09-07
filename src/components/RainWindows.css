@@ -1,0 +1,50 @@
+.rain-windows h3 {
+  margin-bottom: 8px;
+}
+
+.rain-windows ul {
+  padding-left: 20px;
+  margin: 8px 0 0;
+}
+
+.rain-windows li {
+  margin-bottom: 4px;
+}
+
+.rain-strip {
+  position: relative;
+  height: 14px;
+  border-radius: 7px;
+  background: #d9e6d9;
+  overflow: hidden;
+}
+
+.rain-strip-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: #1a6fd4;
+}
+
+.rain-strip-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.rain-windows-dry {
+  margin: 8px 0 0;
+}
+
+.rain-windows-seek {
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent, #646cff);
+  cursor: pointer;
+  text-decoration: underline;
+}

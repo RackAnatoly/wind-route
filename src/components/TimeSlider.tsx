@@ -1,6 +1,6 @@
-import { degToCompass } from "../lib/compass";
-import { formatExposure } from "../lib/format";
-import type { RouteScore } from "../types";
+import { degToCompass } from "@shared/compass";
+import { formatDuration, formatExposure, formatWindCost } from "@shared/format";
+import type { RouteScore } from "@shared/types";
 import "./TimeSlider.css";
 
 interface TimeSliderProps {
@@ -80,6 +80,16 @@ export function TimeSlider({
         {maxPrecipitation >= 0.1 && (
           <span>Осадки: до {maxPrecipitation.toFixed(1)} мм/ч</span>
         )}
+      </div>
+
+      <div className="time-slider-summary">
+        <span>
+          В пути: {formatDuration(score.durationSeconds)} ·{" "}
+          {score.avgSpeedKmh.toFixed(1)} км/ч
+        </span>
+        <span className="time-slider-windcost">
+          {formatWindCost(score.windTimeCostSeconds)}
+        </span>
       </div>
     </div>
   );

@@ -1,0 +1,99 @@
+// Встроенный демо-трек, чтобы приложение было чем занять на первом запуске:
+// петля вокруг Амстердама — там плотное покрытие радара KNMI.
+export const DEMO_ROUTE_NAME = "Амстердам, петля";
+
+export const DEMO_ROUTE_GPX = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="wind-route" xmlns="http://www.topografix.com/GPX/1/1">
+<trk><name>Амстердам, петля</name><trkseg>
+<trkpt lat="52.37000" lon="5.03922"><ele>2.0</ele></trkpt>
+<trkpt lat="52.37540" lon="5.03887"><ele>3.3</ele></trkpt>
+<trkpt lat="52.38077" lon="5.03783"><ele>4.5</ele></trkpt>
+<trkpt lat="52.38608" lon="5.03611"><ele>5.6</ele></trkpt>
+<trkpt lat="52.39132" lon="5.03370"><ele>6.5</ele></trkpt>
+<trkpt lat="52.39645" lon="5.03063"><ele>7.2</ele></trkpt>
+<trkpt lat="52.40144" lon="5.02691"><ele>7.7</ele></trkpt>
+<trkpt lat="52.40628" lon="5.02256"><ele>8.0</ele></trkpt>
+<trkpt lat="52.41095" lon="5.01760"><ele>8.0</ele></trkpt>
+<trkpt lat="52.41540" lon="5.01205"><ele>7.7</ele></trkpt>
+<trkpt lat="52.41963" lon="5.00594"><ele>7.1</ele></trkpt>
+<trkpt lat="52.42361" lon="4.99931"><ele>6.4</ele></trkpt>
+<trkpt lat="52.42733" lon="4.99218"><ele>5.4</ele></trkpt>
+<trkpt lat="52.43076" lon="4.98459"><ele>4.3</ele></trkpt>
+<trkpt lat="52.43389" lon="4.97658"><ele>3.1</ele></trkpt>
+<trkpt lat="52.43670" lon="4.96818"><ele>1.8</ele></trkpt>
+<trkpt lat="52.43917" lon="4.95945"><ele>0.5</ele></trkpt>
+<trkpt lat="52.44131" lon="4.95043"><ele>-0.7</ele></trkpt>
+<trkpt lat="52.44308" lon="4.94115"><ele>-1.7</ele></trkpt>
+<trkpt lat="52.44450" lon="4.93166"><ele>-2.6</ele></trkpt>
+<trkpt lat="52.44554" lon="4.92202"><ele>-3.3</ele></trkpt>
+<trkpt lat="52.44620" lon="4.91227"><ele>-3.8</ele></trkpt>
+<trkpt lat="52.44649" lon="4.90246"><ele>-4.0</ele></trkpt>
+<trkpt lat="52.44639" lon="4.89263"><ele>-3.9</ele></trkpt>
+<trkpt lat="52.44592" lon="4.88284"><ele>-3.6</ele></trkpt>
+<trkpt lat="52.44506" lon="4.87314"><ele>-3.0</ele></trkpt>
+<trkpt lat="52.44383" lon="4.86357"><ele>-2.2</ele></trkpt>
+<trkpt lat="52.44224" lon="4.85419"><ele>-1.2</ele></trkpt>
+<trkpt lat="52.44028" lon="4.84503"><ele>-0.1</ele></trkpt>
+<trkpt lat="52.43798" lon="4.83614"><ele>1.2</ele></trkpt>
+<trkpt lat="52.43533" lon="4.82757"><ele>2.4</ele></trkpt>
+<trkpt lat="52.43236" lon="4.81937"><ele>3.7</ele></trkpt>
+<trkpt lat="52.42908" lon="4.81156"><ele>4.8</ele></trkpt>
+<trkpt lat="52.42551" lon="4.80420"><ele>5.9</ele></trkpt>
+<trkpt lat="52.42165" lon="4.79731"><ele>6.8</ele></trkpt>
+<trkpt lat="52.41755" lon="4.79094"><ele>7.4</ele></trkpt>
+<trkpt lat="52.41320" lon="4.78511"><ele>7.8</ele></trkpt>
+<trkpt lat="52.40864" lon="4.77985"><ele>8.0</ele></trkpt>
+<trkpt lat="52.40389" lon="4.77519"><ele>7.9</ele></trkpt>
+<trkpt lat="52.39896" lon="4.77115"><ele>7.5</ele></trkpt>
+<trkpt lat="52.39390" lon="4.76775"><ele>6.9</ele></trkpt>
+<trkpt lat="52.38871" lon="4.76501"><ele>6.1</ele></trkpt>
+<trkpt lat="52.38343" lon="4.76295"><ele>5.0</ele></trkpt>
+<trkpt lat="52.37809" lon="4.76156"><ele>3.9</ele></trkpt>
+<trkpt lat="52.37270" lon="4.76087"><ele>2.6</ele></trkpt>
+<trkpt lat="52.36730" lon="4.76087"><ele>1.4</ele></trkpt>
+<trkpt lat="52.36191" lon="4.76156"><ele>0.1</ele></trkpt>
+<trkpt lat="52.35657" lon="4.76295"><ele>-1.0</ele></trkpt>
+<trkpt lat="52.35129" lon="4.76501"><ele>-2.1</ele></trkpt>
+<trkpt lat="52.34610" lon="4.76775"><ele>-2.9</ele></trkpt>
+<trkpt lat="52.34104" lon="4.77115"><ele>-3.5</ele></trkpt>
+<trkpt lat="52.33611" lon="4.77519"><ele>-3.9</ele></trkpt>
+<trkpt lat="52.33136" lon="4.77985"><ele>-4.0</ele></trkpt>
+<trkpt lat="52.32680" lon="4.78511"><ele>-3.8</ele></trkpt>
+<trkpt lat="52.32245" lon="4.79094"><ele>-3.4</ele></trkpt>
+<trkpt lat="52.31835" lon="4.79731"><ele>-2.8</ele></trkpt>
+<trkpt lat="52.31449" lon="4.80420"><ele>-1.9</ele></trkpt>
+<trkpt lat="52.31092" lon="4.81156"><ele>-0.8</ele></trkpt>
+<trkpt lat="52.30764" lon="4.81937"><ele>0.3</ele></trkpt>
+<trkpt lat="52.30467" lon="4.82757"><ele>1.6</ele></trkpt>
+<trkpt lat="52.30202" lon="4.83614"><ele>2.8</ele></trkpt>
+<trkpt lat="52.29972" lon="4.84503"><ele>4.1</ele></trkpt>
+<trkpt lat="52.29776" lon="4.85419"><ele>5.2</ele></trkpt>
+<trkpt lat="52.29617" lon="4.86357"><ele>6.2</ele></trkpt>
+<trkpt lat="52.29494" lon="4.87314"><ele>7.0</ele></trkpt>
+<trkpt lat="52.29408" lon="4.88284"><ele>7.6</ele></trkpt>
+<trkpt lat="52.29361" lon="4.89263"><ele>7.9</ele></trkpt>
+<trkpt lat="52.29351" lon="4.90246"><ele>8.0</ele></trkpt>
+<trkpt lat="52.29380" lon="4.91227"><ele>7.8</ele></trkpt>
+<trkpt lat="52.29446" lon="4.92202"><ele>7.3</ele></trkpt>
+<trkpt lat="52.29550" lon="4.93166"><ele>6.6</ele></trkpt>
+<trkpt lat="52.29692" lon="4.94115"><ele>5.7</ele></trkpt>
+<trkpt lat="52.29869" lon="4.95043"><ele>4.7</ele></trkpt>
+<trkpt lat="52.30083" lon="4.95945"><ele>3.5</ele></trkpt>
+<trkpt lat="52.30330" lon="4.96818"><ele>2.2</ele></trkpt>
+<trkpt lat="52.30611" lon="4.97658"><ele>0.9</ele></trkpt>
+<trkpt lat="52.30924" lon="4.98459"><ele>-0.3</ele></trkpt>
+<trkpt lat="52.31267" lon="4.99218"><ele>-1.4</ele></trkpt>
+<trkpt lat="52.31639" lon="4.99931"><ele>-2.4</ele></trkpt>
+<trkpt lat="52.32037" lon="5.00594"><ele>-3.1</ele></trkpt>
+<trkpt lat="52.32460" lon="5.01205"><ele>-3.7</ele></trkpt>
+<trkpt lat="52.32905" lon="5.01760"><ele>-4.0</ele></trkpt>
+<trkpt lat="52.33372" lon="5.02256"><ele>-4.0</ele></trkpt>
+<trkpt lat="52.33856" lon="5.02691"><ele>-3.7</ele></trkpt>
+<trkpt lat="52.34355" lon="5.03063"><ele>-3.2</ele></trkpt>
+<trkpt lat="52.34868" lon="5.03370"><ele>-2.5</ele></trkpt>
+<trkpt lat="52.35392" lon="5.03611"><ele>-1.6</ele></trkpt>
+<trkpt lat="52.35923" lon="5.03783"><ele>-0.5</ele></trkpt>
+<trkpt lat="52.36460" lon="5.03887"><ele>0.7</ele></trkpt>
+<trkpt lat="52.37000" lon="5.03922"><ele>2.0</ele></trkpt>
+</trkseg></trk>
+</gpx>`;

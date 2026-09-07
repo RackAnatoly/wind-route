@@ -1,4 +1,4 @@
-import type { RoutePoint, Segment } from "../types";
+import type { RoutePoint, Segment } from "./types";
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 const toDeg = (rad: number) => (rad * 180) / Math.PI;

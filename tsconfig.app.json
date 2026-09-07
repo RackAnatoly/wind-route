@@ -20,7 +20,12 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    /* Общая с mobile/ логика */
+    "paths": {
+      "@shared/*": ["./shared/*"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "shared"]
 }

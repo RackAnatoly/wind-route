@@ -1,6 +1,6 @@
-import { degToCompass } from "../lib/compass";
-import { formatExposure } from "../lib/format";
-import type { RouteScore } from "../types";
+import { degToCompass } from "@shared/compass";
+import { formatDuration, formatExposure } from "@shared/format";
+import type { RouteScore } from "@shared/types";
 
 interface StartTimeRecommendationProps {
   nowScore: RouteScore;
@@ -15,17 +15,26 @@ function formatTime(iso: string): string {
   });
 }
 
+function formatWeather(score: RouteScore): string {
+  const parts = [
+    formatDuration(score.durationSeconds),
+    formatExposure(score.totalHeadwindExposure),
+    score.wetDistanceRatio > 0
+      ? `дождь на ${(score.wetDistanceRatio * 100).toFixed(0)}% маршрута`
+      : "сухо",
+  ];
+  return parts.join(", ");
+}
+
 export function StartTimeRecommendation({
   nowScore,
   bestScore,
 }: StartTimeRecommendationProps) {
-  const nowExposure = nowScore.totalHeadwindExposure;
-  const bestExposure = bestScore.totalHeadwindExposure;
+  // Разница во времени в пути — самая понятная выгода от переноса старта.
+  const savedSeconds = nowScore.durationSeconds - bestScore.durationSeconds;
 
-  const improvementPct =
-    nowExposure > 0
-      ? ((nowExposure - bestExposure) / nowExposure) * 100
-      : 0;
+  const drierByPct =
+    (nowScore.wetDistanceRatio - bestScore.wetDistanceRatio) * 100;
 
   const worstSegments = [...bestScore.segments]
     .sort((a, b) => b.headwindComponent - a.headwindComponent)
@@ -43,18 +52,23 @@ export function StartTimeRecommendation({
       ) : (
         <p>
           Лучшее время старта: <strong>{formatTime(bestScore.startTime)}</strong>
-          {improvementPct > 1 && (
+          {drierByPct > 5 && (
             <>
-              {" "}— встречный ветер в среднем на{" "}
-              <strong>{improvementPct.toFixed(0)}%</strong> слабее, чем при
-              старте сейчас
+              {" "}— сухого маршрута на{" "}
+              <strong>{drierByPct.toFixed(0)} п.п.</strong> больше
+            </>
+          )}
+          {drierByPct <= 5 && savedSeconds > 60 && (
+            <>
+              {" "}— проедешь на <strong>{formatDuration(savedSeconds)}</strong>{" "}
+              быстрее, чем при старте сейчас
             </>
           )}
         </p>
       )}
       <p>
-        Сейчас: {formatExposure(nowExposure)} · при рекомендуемом старте:{" "}
-        {formatExposure(bestExposure)}
+        Сейчас: {formatWeather(nowScore)} · при рекомендуемом старте:{" "}
+        {formatWeather(bestScore)}
       </p>
       <h4>Худшие участки (при рекомендуемом старте)</h4>
       <ul>

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -11,14 +11,22 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./MapView.css";
-import type { ScoredSegment } from "../types";
+import { RadarLayer } from "./RadarLayer";
+import { RAIN_THRESHOLD_MM } from "@shared/scoring";
+import type { RadarFrame, RadarIndex } from "@shared/radar";
+import type { ScoredSegment } from "@shared/types";
 
 interface MapViewProps {
   segments: ScoredSegment[];
+  radarIndex: RadarIndex | null;
+  // Кадр радара на отображаемый момент; null — момент вне покрытия радара,
+  // тогда осадки рисуются по модельному прогнозу.
+  radarFrame: RadarFrame | null;
+  rider: { lat: number; lon: number; distanceKm: number } | null;
 }
 
 const WIND_ARROW_COUNT = 7;
-const PRECIPITATION_MIN_MM = 0.1;
+const DEFAULT_RADAR_OPACITY = 0.65;
 
 function precipColor(precipitation: number, maxPrecipitation: number): string {
   if (maxPrecipitation <= 0) return "transparent";
@@ -70,6 +78,18 @@ function endpointIcon(label: string, color: string): L.DivIcon {
   });
 }
 
+function riderIcon(distanceKm: number): L.DivIcon {
+  return L.divIcon({
+    className: "rider-icon",
+    html: `
+      <div class="rider-dot"></div>
+      <div class="rider-label">${distanceKm.toFixed(0)} км</div>
+    `,
+    iconSize: [54, 40],
+    iconAnchor: [27, 11],
+  });
+}
+
 // Выбирает до `count` равномерно распределённых сегментов вдоль маршрута для отображения стрелок ветра.
 function pickArrowSegments(
   segments: ScoredSegment[],
@@ -84,8 +104,14 @@ function pickArrowSegments(
   return picked;
 }
 
+// Подгоняем карту под трек только при смене геометрии маршрута: при перемотке
+// времени сегменты пересчитываются заново, и рефит сбрасывал бы ручной зум.
 function FitBounds({ segments }: { segments: ScoredSegment[] }) {
   const map = useMap();
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  const routeKey = `${segments.length}:${first?.start.lat},${first?.start.lon}:${last?.end.lat},${last?.end.lon}`;
+
   useEffect(() => {
     if (segments.length === 0) return;
     const bounds = L.latLngBounds(
@@ -95,16 +121,24 @@ function FitBounds({ segments }: { segments: ScoredSegment[] }) {
       ]),
     );
     map.fitBounds(bounds, { padding: [20, 20] });
-  }, [segments, map]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey, map]);
+
   return null;
 }
 
 function MapLegend({
   maxAbs,
   maxPrecipitation,
+  radarActive,
+  radarOpacity,
+  onRadarOpacityChange,
 }: {
   maxAbs: number;
   maxPrecipitation: number;
+  radarActive: boolean;
+  radarOpacity: number;
+  onRadarOpacityChange: (value: number) => void;
 }) {
   return (
     <div className="map-legend">
@@ -127,12 +161,38 @@ function MapLegend({
         </svg>
         <span>Стрелка — куда дует ветер, подпись — скорость</span>
       </div>
-      {maxPrecipitation >= PRECIPITATION_MIN_MM && (
-        <div className="legend-arrow-row">
-          <span className="legend-dot legend-dot--precip" />
-          <span>Синий круг — осадки, ярче = сильнее (до {maxPrecipitation.toFixed(1)} мм/ч)</span>
+
+      {radarActive ? (
+        <div className="legend-radar">
+          <div className="legend-radar-row">
+            <span>Радар осадков</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(radarOpacity * 100)}
+              onChange={(e) => onRadarOpacityChange(Number(e.target.value) / 100)}
+              aria-label="Прозрачность радара"
+            />
+          </div>
+          <div className="legend-radar-scale" />
+          <div className="legend-gradient-labels">
+            <span>морось</span>
+            <span>ливень</span>
+          </div>
         </div>
+      ) : (
+        maxPrecipitation >= RAIN_THRESHOLD_MM && (
+          <div className="legend-arrow-row">
+            <span className="legend-dot legend-dot--precip" />
+            <span>
+              Синий круг — прогноз осадков, ярче = сильнее (до{" "}
+              {maxPrecipitation.toFixed(1)} мм/ч)
+            </span>
+          </div>
+        )
       )}
+
       <div className="legend-endpoints-row">
         <span className="legend-dot" style={{ background: "#2e7d32" }} />
         <span>Старт</span>
@@ -143,7 +203,9 @@ function MapLegend({
   );
 }
 
-export function MapView({ segments }: MapViewProps) {
+export function MapView({ segments, radarIndex, radarFrame, rider }: MapViewProps) {
+  const [radarOpacity, setRadarOpacity] = useState(DEFAULT_RADAR_OPACITY);
+
   if (segments.length === 0) return null;
 
   const maxAbs = Math.max(
@@ -153,6 +215,7 @@ export function MapView({ segments }: MapViewProps) {
   const maxPrecipitation = Math.max(...segments.map((s) => s.precipitation), 0);
   const center: [number, number] = [segments[0].start.lat, segments[0].start.lon];
   const arrowSegments = pickArrowSegments(segments, WIND_ARROW_COUNT);
+  const radarActive = radarIndex !== null && radarFrame !== null;
 
   return (
     <div className="map-view">
@@ -166,6 +229,13 @@ export function MapView({ segments }: MapViewProps) {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        {radarIndex && radarFrame && (
+          <RadarLayer
+            index={radarIndex}
+            frame={radarFrame}
+            opacity={radarOpacity}
+          />
+        )}
         <FitBounds segments={segments} />
         {segments.map((segment, i) => (
           <Polyline
@@ -194,8 +264,11 @@ export function MapView({ segments }: MapViewProps) {
                   {segment.headwindComponent > 0 ? "Встречный" : "Попутный"}:{" "}
                   {Math.abs(segment.headwindComponent).toFixed(1)} км/ч
                 </div>
-                {segment.precipitation >= PRECIPITATION_MIN_MM && (
-                  <div>Осадки: {segment.precipitation.toFixed(1)} мм/ч</div>
+                {segment.precipitation >= RAIN_THRESHOLD_MM && (
+                  <div>
+                    Осадки: {segment.precipitation.toFixed(1)} мм/ч (
+                    {segment.precipitationProbability.toFixed(0)}%)
+                  </div>
                 )}
               </div>
             </Popup>
@@ -213,9 +286,10 @@ export function MapView({ segments }: MapViewProps) {
             />
           );
         })}
-        {maxPrecipitation >= PRECIPITATION_MIN_MM &&
+        {!radarActive &&
+          maxPrecipitation >= RAIN_THRESHOLD_MM &&
           arrowSegments.map((segment, i) => {
-            if (segment.precipitation < PRECIPITATION_MIN_MM) return null;
+            if (segment.precipitation < RAIN_THRESHOLD_MM) return null;
             const midLat = (segment.start.lat + segment.end.lat) / 2;
             const midLon = (segment.start.lon + segment.end.lon) / 2;
             return (
@@ -248,8 +322,22 @@ export function MapView({ segments }: MapViewProps) {
         >
           <Popup>Финиш</Popup>
         </Marker>
+        {rider && (
+          <Marker
+            position={[rider.lat, rider.lon]}
+            icon={riderIcon(rider.distanceKm)}
+            interactive={false}
+            zIndexOffset={1000}
+          />
+        )}
       </MapContainer>
-      <MapLegend maxAbs={maxAbs} maxPrecipitation={maxPrecipitation} />
+      <MapLegend
+        maxAbs={maxAbs}
+        maxPrecipitation={maxPrecipitation}
+        radarActive={radarActive}
+        radarOpacity={radarOpacity}
+        onRadarOpacityChange={setRadarOpacity}
+      />
     </div>
   );
 }

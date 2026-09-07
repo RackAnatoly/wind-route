@@ -7,7 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import type { RoutePoint } from "../types";
+import type { RoutePoint } from "@shared/types";
 
 interface ElevationProfileProps {
   points: RoutePoint[];
