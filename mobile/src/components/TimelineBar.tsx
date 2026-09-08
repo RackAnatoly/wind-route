@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Slider from "@react-native-community/slider";
+import { MAP_CREDITS } from "../lib/mapStyle";
+import { CLOUD_SETTLE_MS } from "../lib/timing";
 import { RADAR_SCALE, theme } from "../theme";
 
 const STEP_MINUTES = 10;
 const STEP_MS = STEP_MINUTES * 60 * 1000;
-const PLAY_INTERVAL_MS = 650;
+// Шаг проигрывания чуть длиннее полной смены кадра облачности: иначе следующий
+// кроссфейд начинается поверх незакончившегося и картинка дёргается.
+const PLAY_INTERVAL_MS = CLOUD_SETTLE_MS + 150;
 
 export type WeatherSource = "radar" | "forecast";
 
@@ -61,17 +65,24 @@ export function TimelineBar({
     [onChange],
   );
 
+  // Шаг читается из ref, а не из замыкания: иначе каждая смена времени
+  // пересоздавала бы интервал и отсчёт начинался бы заново — кадры шли бы
+  // рвано, с разной паузой.
+  const playState = useRef({ valueMinutes, minMinutes, maxMinutes, onChange });
+  playState.current = { valueMinutes, minMinutes, maxMinutes, onChange };
+
   useEffect(() => {
     if (!playing) return;
     const id = setInterval(() => {
+      const state = playState.current;
       const next =
-        valueMinutes + STEP_MINUTES > maxMinutes
-          ? minMinutes
-          : valueMinutes + STEP_MINUTES;
-      onChange(new Date(next * 60 * 1000));
+        state.valueMinutes + STEP_MINUTES > state.maxMinutes
+          ? state.minMinutes
+          : state.valueMinutes + STEP_MINUTES;
+      state.onChange(new Date(next * 60 * 1000));
     }, PLAY_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [playing, valueMinutes, minMinutes, maxMinutes, onChange]);
+  }, [playing]);
 
   const elapsedMin = Math.round((value.getTime() - rideStart.getTime()) / 60000);
   const elapsedLabel =
@@ -158,6 +169,7 @@ export function TimelineBar({
       </Pressable>
 
       <Text style={styles.note}>{note}</Text>
+      <Text style={styles.credits}>{MAP_CREDITS}</Text>
     </View>
   );
 }
@@ -249,5 +261,10 @@ const styles = StyleSheet.create({
     color: theme.textMuted,
     fontSize: 11,
     lineHeight: 15,
+  },
+  credits: {
+    color: theme.textMuted,
+    fontSize: 9,
+    opacity: 0.7,
   },
 });

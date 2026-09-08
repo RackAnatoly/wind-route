@@ -24,7 +24,7 @@ import { satelliteFrameAt } from "@shared/satellite";
 import type { RouteScore } from "@shared/types";
 import type { MapRegion, RadarMapHandle } from "./src/components/RadarMap";
 import { RadarMap } from "./src/components/RadarMap";
-import { writeCloudTiles, type CloudTiles } from "./src/lib/cloudTiles";
+import { writeCloudField, type CloudField } from "./src/lib/cloudImage";
 import {
   DEFAULT_LAYERS,
   LayerSwitcher,
@@ -36,6 +36,7 @@ import { RiderSheet } from "./src/components/RiderSheet";
 import { RouteHeader } from "./src/components/RouteHeader";
 import { TimelineBar } from "./src/components/TimelineBar";
 import { DEMO_ROUTE_GPX, DEMO_ROUTE_NAME } from "./src/lib/demoRoute";
+import { MAP_CREDITS } from "./src/lib/mapStyle";
 import { theme } from "./src/theme";
 
 // Индекс кадров радара обновляется каждые 10 минут — перечитываем чуть чаще.
@@ -43,14 +44,16 @@ const RADAR_REFRESH_MS = 5 * 60 * 1000;
 const OPACITY_STEPS = [0.65, 0.35, 1] as const;
 
 // Пока маршрут не загружен, карта открывается на геолокации пользователя —
-// это тот же масштаб, что даёт fitToCoordinates для маршрута в полсотни км.
-const DEFAULT_DELTA = 0.6;
+// это примерно тот же масштаб, что даёт подгонка под маршрут в полсотни км.
+const DEFAULT_ZOOM = 8.5;
+// Поле облачности запрашиваем заметно шире экрана: иначе слой обрывается по
+// краю, стоит чуть отъехать в сторону.
+const CLOUD_SPAN_DEG = 2.4;
 // Геолокация недоступна/запрещена — открываемся на Гданьске, как в демо-маршруте.
 const FALLBACK_REGION: MapRegion = {
   latitude: 54.352,
   longitude: 18.6466,
-  latitudeDelta: DEFAULT_DELTA,
-  longitudeDelta: DEFAULT_DELTA,
+  zoom: DEFAULT_ZOOM,
 };
 
 export default function App() {
@@ -126,8 +129,7 @@ function RadarScreen() {
         region = {
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,
-          latitudeDelta: DEFAULT_DELTA,
-          longitudeDelta: DEFAULT_DELTA,
+          zoom: DEFAULT_ZOOM,
         };
       }
     } catch (e) {
@@ -137,10 +139,10 @@ function RadarScreen() {
 
     try {
       const grid = await fetchCloudGridForBounds({
-        south: region.latitude - region.latitudeDelta / 2,
-        north: region.latitude + region.latitudeDelta / 2,
-        west: region.longitude - region.longitudeDelta / 2,
-        east: region.longitude + region.longitudeDelta / 2,
+        south: region.latitude - CLOUD_SPAN_DEG / 2,
+        north: region.latitude + CLOUD_SPAN_DEG / 2,
+        west: region.longitude - CLOUD_SPAN_DEG / 2,
+        east: region.longitude + CLOUD_SPAN_DEG / 2,
       });
       setDefaultCloudGrid(grid);
     } catch (e) {
@@ -253,10 +255,10 @@ function RadarScreen() {
     [mapTime],
   );
 
-  const cloudTiles = useMemo<CloudTiles | null>(() => {
+  const cloudField = useMemo<CloudField | null>(() => {
     if (!activeCloudGrid || !mapTime || satelliteFrame) return null;
     try {
-      return writeCloudTiles(activeCloudGrid, mapTime.getTime());
+      return writeCloudField(activeCloudGrid, mapTime.getTime());
     } catch (e) {
       console.warn("Слой облачности недоступен:", String(e));
       return null;
@@ -302,7 +304,7 @@ function RadarScreen() {
         radarFrame={radarFrame}
         radarOpacity={OPACITY_STEPS[opacityStep]}
         riderPosition={riderPosition}
-        cloudTiles={cloudTiles}
+        cloudField={cloudField}
         satelliteFrame={satelliteFrame}
         layers={layers}
         defaultRegion={defaultRegion}
@@ -358,6 +360,7 @@ function RadarScreen() {
               Загрузите GPX — карта покажет радар осадков и то, где вы будете в
               каждый момент поездки.
             </Text>
+            <Text style={styles.credits}>{MAP_CREDITS}</Text>
           </View>
         )}
       </View>
@@ -410,5 +413,11 @@ const styles = StyleSheet.create({
     color: theme.textMuted,
     fontSize: 13,
     lineHeight: 18,
+  },
+  credits: {
+    color: theme.textMuted,
+    fontSize: 9,
+    opacity: 0.7,
+    marginTop: 8,
   },
 });
