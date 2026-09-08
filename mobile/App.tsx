@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { File } from "expo-file-system";
+import * as Location from "expo-location";
 import { parseGpx, type ParsedRoute } from "@shared/gpx";
 import { fetchRouteWind, type RouteWindPoint } from "@shared/wind";
 import {
@@ -14,8 +15,22 @@ import {
 import { positionAtTime, scoreRoute, summarizeWind } from "@shared/scoring";
 import { DEFAULT_RIDER, RIDER_PRESETS, type RiderProfile } from "@shared/physics";
 import { buildDodgeGrid, type DodgeCell } from "@shared/dodge";
+import {
+  fetchCloudGrid,
+  fetchCloudGridForBounds,
+  type CloudGrid,
+} from "@shared/clouds";
+import { satelliteFrameAt } from "@shared/satellite";
 import type { RouteScore } from "@shared/types";
+import type { MapRegion, RadarMapHandle } from "./src/components/RadarMap";
 import { RadarMap } from "./src/components/RadarMap";
+import { writeCloudTiles, type CloudTiles } from "./src/lib/cloudTiles";
+import {
+  DEFAULT_LAYERS,
+  LayerSwitcher,
+  type MapLayers,
+} from "./src/components/LayerSwitcher";
+import { MapControls } from "./src/components/MapControls";
 import { DodgeSheet } from "./src/components/DodgeSheet";
 import { RiderSheet } from "./src/components/RiderSheet";
 import { RouteHeader } from "./src/components/RouteHeader";
@@ -27,6 +42,17 @@ import { theme } from "./src/theme";
 const RADAR_REFRESH_MS = 5 * 60 * 1000;
 const OPACITY_STEPS = [0.65, 0.35, 1] as const;
 
+// Пока маршрут не загружен, карта открывается на геолокации пользователя —
+// это тот же масштаб, что даёт fitToCoordinates для маршрута в полсотни км.
+const DEFAULT_DELTA = 0.6;
+// Геолокация недоступна/запрещена — открываемся на Гданьске, как в демо-маршруте.
+const FALLBACK_REGION: MapRegion = {
+  latitude: 54.352,
+  longitude: 18.6466,
+  latitudeDelta: DEFAULT_DELTA,
+  longitudeDelta: DEFAULT_DELTA,
+};
+
 export default function App() {
   return (
     <SafeAreaProvider>
@@ -37,6 +63,7 @@ export default function App() {
 
 function RadarScreen() {
   const insets = useSafeAreaInsets();
+  const mapRef = useRef<RadarMapHandle>(null);
   const [routeName, setRouteName] = useState<string | null>(null);
   const [route, setRoute] = useState<ParsedRoute | null>(null);
   const [windPoints, setWindPoints] = useState<RouteWindPoint[] | null>(null);
@@ -48,6 +75,10 @@ function RadarScreen() {
   const [rider, setRider] = useState<RiderProfile>(DEFAULT_RIDER);
   const [riderSheetOpen, setRiderSheetOpen] = useState(false);
   const [dodgeSheetOpen, setDodgeSheetOpen] = useState(false);
+  const [cloudGrid, setCloudGrid] = useState<CloudGrid | null>(null);
+  const [layers, setLayers] = useState<MapLayers>(DEFAULT_LAYERS);
+  const [defaultRegion, setDefaultRegion] = useState<MapRegion>(FALLBACK_REGION);
+  const [defaultCloudGrid, setDefaultCloudGrid] = useState<CloudGrid | null>(null);
 
   // Радар — отдельный необязательный слой: если RainViewer недоступен,
   // приложение продолжает работать на модельном прогнозе.
@@ -70,15 +101,77 @@ function RadarScreen() {
     };
   }, []);
 
+  // Пока маршрут не загружен, «сейчас» ведёт таймлайн само — обновляем каждые
+  // несколько минут, чтобы кадр радара не протухал. С маршрутом временем
+  // управляет пользователь через TimelineBar, поэтому эффект замолкает.
+  useEffect(() => {
+    if (route) return;
+    const tick = () => setMapTime(new Date());
+    tick();
+    const id = setInterval(tick, RADAR_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [route]);
+
+  // Геолокация — тоже необязательная: без разрешения или на симуляторе без
+  // заданной позиции просто остаёмся на FALLBACK_REGION. Вынесена в функцию —
+  // её же дёргает кнопка «моё местоположение» на карте.
+  const locateMe = useCallback(async () => {
+    let region = FALLBACK_REGION;
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === "granted") {
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        region = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          latitudeDelta: DEFAULT_DELTA,
+          longitudeDelta: DEFAULT_DELTA,
+        };
+      }
+    } catch (e) {
+      console.warn("Геолокация недоступна:", e);
+    }
+    setDefaultRegion(region);
+
+    try {
+      const grid = await fetchCloudGridForBounds({
+        south: region.latitude - region.latitudeDelta / 2,
+        north: region.latitude + region.latitudeDelta / 2,
+        west: region.longitude - region.longitudeDelta / 2,
+        east: region.longitude + region.longitudeDelta / 2,
+      });
+      setDefaultCloudGrid(grid);
+    } catch (e) {
+      console.warn("Облачность недоступна:", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    locateMe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const loadRoute = useCallback(async (xmlText: string, name: string) => {
     setLoading(true);
+    setCloudGrid(null);
     try {
       const parsed = parseGpx(xmlText);
-      const wp = await fetchRouteWind(parsed.routePoints);
+      // Облачность — отдельный необязательный слой: если её не удалось получить,
+      // остальное должно работать.
+      const [wp, clouds] = await Promise.all([
+        fetchRouteWind(parsed.routePoints),
+        fetchCloudGrid(parsed.routePoints).catch((e) => {
+          console.warn("Облачность недоступна:", e);
+          return null;
+        }),
+      ]);
       const start = new Date();
 
       setRoute(parsed);
       setWindPoints(wp);
+      setCloudGrid(clouds);
       setRouteName(name);
       setRideStart(start);
       setMapTime(start);
@@ -147,6 +240,37 @@ function RadarScreen() {
     [],
   );
 
+  // Картинка поля облачности строится за считанные миллисекунды, поэтому
+  // пересобирается прямо на каждый шаг таймлайна и кладётся во временный файл.
+  // Без маршрута используем поле вокруг геолокации, чтобы слой был виден сразу.
+  const activeCloudGrid = cloudGrid ?? defaultCloudGrid;
+
+  // На прошлое и «сейчас» облачность показывается снимком Meteosat, и модельное
+  // поле для этих моментов не нужно — оно рисуется только дальше в будущее,
+  // куда снимок не достаёт.
+  const satelliteFrame = useMemo(
+    () => (mapTime ? satelliteFrameAt(mapTime) : null),
+    [mapTime],
+  );
+
+  const cloudTiles = useMemo<CloudTiles | null>(() => {
+    if (!activeCloudGrid || !mapTime || satelliteFrame) return null;
+    try {
+      return writeCloudTiles(activeCloudGrid, mapTime.getTime());
+    } catch (e) {
+      console.warn("Слой облачности недоступен:", String(e));
+      return null;
+    }
+    // Кадр снимка меняется реже, чем `mapTime`, но зависимость нужна: без неё
+    // модельное поле не пересобралось бы на переходе «снимок → прогноз».
+  }, [activeCloudGrid, mapTime, satelliteFrame]);
+
+  const toggleLayer = useCallback(
+    (key: keyof MapLayers) =>
+      setLayers((prev) => ({ ...prev, [key]: !prev[key] })),
+    [],
+  );
+
   const coverage = radarIndex ? radarCoverage(radarIndex) : null;
   const radarFrame = radarIndex && mapTime ? frameAt(radarIndex, mapTime) : null;
   const riderPosition = score && mapTime ? positionAtTime(score, mapTime) : null;
@@ -172,11 +296,16 @@ function RadarScreen() {
   return (
     <View style={styles.root}>
       <RadarMap
+        ref={mapRef}
         segments={score?.segments ?? []}
         radarIndex={radarIndex}
         radarFrame={radarFrame}
         radarOpacity={OPACITY_STEPS[opacityStep]}
         riderPosition={riderPosition}
+        cloudTiles={cloudTiles}
+        satelliteFrame={satelliteFrame}
+        layers={layers}
+        defaultRegion={defaultRegion}
       />
 
       {/* Панели идут от края до края и заходят под статус-бар — так же выглядят
@@ -201,7 +330,14 @@ function RadarScreen() {
           }
         />
 
-        <View style={styles.spacer} pointerEvents="none" />
+        <View style={styles.spacer} pointerEvents="box-none">
+          <LayerSwitcher layers={layers} onToggle={toggleLayer} />
+          <MapControls
+            onLocateMe={locateMe}
+            onZoomIn={() => mapRef.current?.zoomIn()}
+            onZoomOut={() => mapRef.current?.zoomOut()}
+          />
+        </View>
 
         {score && rideStart && timelineStart && mapTime ? (
           <TimelineBar
@@ -262,6 +398,7 @@ const styles = StyleSheet.create({
   },
   spacer: {
     flex: 1,
+    justifyContent: "center",
   },
   hint: {
     backgroundColor: theme.panel,
