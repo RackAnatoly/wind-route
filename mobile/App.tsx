@@ -5,7 +5,11 @@ import { StatusBar } from "expo-status-bar";
 import { File } from "expo-file-system";
 import * as Location from "expo-location";
 import { parseGpx, type ParsedRoute } from "@shared/gpx";
-import { fetchRouteWind, type RouteWindPoint } from "@shared/wind";
+import {
+  attachWindCacheStore,
+  fetchRouteWind,
+  type RouteWindPoint,
+} from "@shared/wind";
 import {
   fetchRadarIndex,
   frameAt,
@@ -16,8 +20,11 @@ import { positionAtTime, scoreRoute, summarizeWind } from "@shared/scoring";
 import { DEFAULT_RIDER, RIDER_PRESETS, type RiderProfile } from "@shared/physics";
 import { buildDodgeGrid, type DodgeCell } from "@shared/dodge";
 import {
-  fetchCloudGrid,
-  fetchCloudGridForBounds,
+  attachCloudCacheStore,
+  cloudTilesFor,
+  fetchCloudTiles,
+  fetchRouteCloudGrid,
+  type Bounds,
   type CloudGrid,
 } from "@shared/clouds";
 import { satelliteFrameAt } from "@shared/satellite";
@@ -25,6 +32,7 @@ import type { RouteScore } from "@shared/types";
 import type { MapRegion, RadarMapHandle } from "./src/components/RadarMap";
 import { RadarMap } from "./src/components/RadarMap";
 import { writeCloudField, type CloudField } from "./src/lib/cloudImage";
+import { fileCacheStore } from "./src/lib/cacheStore";
 import {
   DEFAULT_LAYERS,
   LayerSwitcher,
@@ -39,16 +47,23 @@ import { DEMO_ROUTE_GPX, DEMO_ROUTE_NAME } from "./src/lib/demoRoute";
 import { MAP_CREDITS } from "./src/lib/mapStyle";
 import { theme } from "./src/theme";
 
+// Кэши погоды переживают перезапуск: подключаем дисковые хранилища
+// до первого запроса.
+attachCloudCacheStore(fileCacheStore("cloud-grid"));
+attachWindCacheStore(fileCacheStore("route-wind"));
+
 // Индекс кадров радара обновляется каждые 10 минут — перечитываем чуть чаще.
 const RADAR_REFRESH_MS = 5 * 60 * 1000;
+// Стабильная пустая геометрия: новый массив на каждом рендере дёргал бы
+// пересчёт трека в карте.
+const EMPTY_TRACK: { lat: number; lon: number }[] = [];
+// Пауза после ошибки Open-Meteo — ровно окно минутного лимита.
+const CLOUD_RETRY_MS = 60 * 1000;
 const OPACITY_STEPS = [0.65, 0.35, 1] as const;
 
 // Пока маршрут не загружен, карта открывается на геолокации пользователя —
 // это примерно тот же масштаб, что даёт подгонка под маршрут в полсотни км.
 const DEFAULT_ZOOM = 8.5;
-// Поле облачности запрашиваем заметно шире экрана: иначе слой обрывается по
-// краю, стоит чуть отъехать в сторону.
-const CLOUD_SPAN_DEG = 2.4;
 // Геолокация недоступна/запрещена — открываемся на Гданьске, как в демо-маршруте.
 const FALLBACK_REGION: MapRegion = {
   latitude: 54.352,
@@ -70,6 +85,8 @@ function RadarScreen() {
   const [routeName, setRouteName] = useState<string | null>(null);
   const [route, setRoute] = useState<ParsedRoute | null>(null);
   const [windPoints, setWindPoints] = useState<RouteWindPoint[] | null>(null);
+  // Почему нет прогноза по открытому маршруту; null — есть или ещё грузится.
+  const [forecastError, setForecastError] = useState<string | null>(null);
   const [rideStart, setRideStart] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
   const [radarIndex, setRadarIndex] = useState<RadarIndex | null>(null);
@@ -78,10 +95,19 @@ function RadarScreen() {
   const [rider, setRider] = useState<RiderProfile>(DEFAULT_RIDER);
   const [riderSheetOpen, setRiderSheetOpen] = useState(false);
   const [dodgeSheetOpen, setDodgeSheetOpen] = useState(false);
-  const [cloudGrid, setCloudGrid] = useState<CloudGrid | null>(null);
+  // Мелкая сетка облачности по маршруту — ложится поверх тайлов.
+  const [routeCloudGrid, setRouteCloudGrid] = useState<CloudGrid | null>(null);
   const [layers, setLayers] = useState<MapLayers>(DEFAULT_LAYERS);
-  const [defaultRegion, setDefaultRegion] = useState<MapRegion>(FALLBACK_REGION);
-  const [defaultCloudGrid, setDefaultCloudGrid] = useState<CloudGrid | null>(null);
+  // null, пока геолокация не отработала: карта стартует на фолбэке, и тайлы
+  // облачности за него уходить не должны — через секунду камера улетит
+  // в реальный район, и запрос пропал бы зря.
+  const [defaultRegion, setDefaultRegion] = useState<MapRegion | null>(null);
+  // Видимая область карты и сшитые тайлы облачности под неё.
+  const [viewport, setViewport] = useState<Bounds | null>(null);
+  const [tileCloudGrid, setTileCloudGrid] = useState<{
+    key: string;
+    grid: CloudGrid;
+  } | null>(null);
 
   // Радар — отдельный необязательный слой: если RainViewer недоступен,
   // приложение продолжает работать на модельном прогнозе.
@@ -104,16 +130,17 @@ function RadarScreen() {
     };
   }, []);
 
-  // Пока маршрут не загружен, «сейчас» ведёт таймлайн само — обновляем каждые
-  // несколько минут, чтобы кадр радара не протухал. С маршрутом временем
-  // управляет пользователь через TimelineBar, поэтому эффект замолкает.
+  // Пока нет маршрута с прогнозом, «сейчас» ведёт таймлайн само — обновляем
+  // каждые несколько минут, чтобы кадр радара не протухал. С прогнозом
+  // временем управляет пользователь через TimelineBar, и эффект замолкает.
+  const hasForecast = windPoints !== null;
   useEffect(() => {
-    if (route) return;
+    if (hasForecast) return;
     const tick = () => setMapTime(new Date());
     tick();
     const id = setInterval(tick, RADAR_REFRESH_MS);
     return () => clearInterval(id);
-  }, [route]);
+  }, [hasForecast]);
 
   // Геолокация — тоже необязательная: без разрешения или на симуляторе без
   // заданной позиции просто остаёмся на FALLBACK_REGION. Вынесена в функцию —
@@ -135,19 +162,15 @@ function RadarScreen() {
     } catch (e) {
       console.warn("Геолокация недоступна:", e);
     }
-    setDefaultRegion(region);
-
-    try {
-      const grid = await fetchCloudGridForBounds({
-        south: region.latitude - CLOUD_SPAN_DEG / 2,
-        north: region.latitude + CLOUD_SPAN_DEG / 2,
-        west: region.longitude - CLOUD_SPAN_DEG / 2,
-        east: region.longitude + CLOUD_SPAN_DEG / 2,
-      });
-      setDefaultCloudGrid(grid);
-    } catch (e) {
-      console.warn("Облачность недоступна:", e);
-    }
+    // Тот же объект — нет ререндера: повторное нажатие «моё местоположение»
+    // на том же месте ничего не дёргает.
+    setDefaultRegion((prev) =>
+      prev &&
+      prev.latitude === region.latitude &&
+      prev.longitude === region.longitude
+        ? prev
+        : region,
+    );
   }, []);
 
   useEffect(() => {
@@ -155,38 +178,57 @@ function RadarScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadRoute = useCallback(async (xmlText: string, name: string) => {
+  // Прогноз по маршруту грузится отдельно от самого маршрута: трек на карте
+  // не должен зависеть от лимитов Open-Meteo. Номер запроса отсекает ответ,
+  // пришедший уже после того, как открыли другой маршрут.
+  const forecastRequestRef = useRef(0);
+  const loadForecast = useCallback(async (parsed: ParsedRoute) => {
+    const request = ++forecastRequestRef.current;
     setLoading(true);
-    setCloudGrid(null);
+    setForecastError(null);
     try {
-      const parsed = parseGpx(xmlText);
-      // Облачность — отдельный необязательный слой: если её не удалось получить,
-      // остальное должно работать.
-      const [wp, clouds] = await Promise.all([
-        fetchRouteWind(parsed.routePoints),
-        fetchCloudGrid(parsed.routePoints).catch((e) => {
-          console.warn("Облачность недоступна:", e);
-          return null;
-        }),
-      ]);
+      const wp = await fetchRouteWind(parsed.routePoints);
+      if (request !== forecastRequestRef.current) return;
       const start = new Date();
-
-      setRoute(parsed);
       setWindPoints(wp);
-      setCloudGrid(clouds);
-      setRouteName(name);
       setRideStart(start);
       setMapTime(start);
     } catch (e) {
-      console.error(e);
-      Alert.alert(
-        "Не удалось открыть маршрут",
-        e instanceof Error ? e.message : String(e),
-      );
+      if (request !== forecastRequestRef.current) return;
+      console.warn("Прогноз по маршруту недоступен:", e);
+      setForecastError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (request === forecastRequestRef.current) setLoading(false);
     }
   }, []);
+
+  const loadRoute = useCallback(
+    async (xmlText: string, name: string) => {
+      let parsed: ParsedRoute;
+      try {
+        parsed = parseGpx(xmlText);
+      } catch (e) {
+        console.error(e);
+        Alert.alert(
+          "Не удалось открыть маршрут",
+          e instanceof Error ? e.message : String(e),
+        );
+        return;
+      }
+
+      // Сначала трек — карта сразу подгоняется под него, прогноз догоняет.
+      setRouteCloudGrid(null);
+      setWindPoints(null);
+      setRoute(parsed);
+      setRouteName(name);
+      await loadForecast(parsed);
+    },
+    [loadForecast],
+  );
+
+  const retryForecast = useCallback(() => {
+    if (route) loadForecast(route);
+  }, [route, loadForecast]);
 
   const handlePickRoute = useCallback(async () => {
     try {
@@ -214,10 +256,70 @@ function RadarScreen() {
     [loadRoute],
   );
 
+  // Поле облачности — самые дорогие запросы к Open-Meteo (12×12 координат
+  // каждая сетка), поэтому оно грузится лениво: только когда слой включён
+  // и только если сетки ещё нет. Выключил слой — квота не тратится; включил
+  // обратно — сетка уже на месте, повторного запроса не будет.
+  //
+  // Основа — тайлы под видимую область: карта сообщает границы после каждого
+  // движения, и если набор тайлов тот же, ничего не происходит.
+  //
+  // После ошибки (обычно 429 — минутный лимит Open-Meteo) запросы замолкают
+  // на паузу: иначе каждое движение камеры било бы в лимит снова и снова, и
+  // он не отпускал бы вообще. По истечении паузы эффект будится сам.
+  const tileRetryAfterRef = useRef(0);
+  const [tileRetryTick, setTileRetryTick] = useState(0);
+  useEffect(() => {
+    if (!layers.clouds || !viewport) return;
+    if (!defaultRegion && !route) return; // камера ещё не там, где надо
+    const set = cloudTilesFor(viewport);
+    if (!set || tileCloudGrid?.key === set.key) return;
+
+    const wait = tileRetryAfterRef.current - Date.now();
+    if (wait > 0) {
+      const id = setTimeout(() => setTileRetryTick((t) => t + 1), wait);
+      return () => clearTimeout(id);
+    }
+
+    let cancelled = false;
+    fetchCloudTiles(set)
+      .then((grid) => {
+        if (!cancelled) setTileCloudGrid({ key: set.key, grid });
+      })
+      .catch((e) => {
+        console.warn("Облачность недоступна:", e);
+        tileRetryAfterRef.current = Date.now() + CLOUD_RETRY_MS;
+        if (!cancelled) setTileRetryTick((t) => t + 1);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [layers.clouds, viewport, tileCloudGrid, defaultRegion, route, tileRetryTick]);
+
+  // Мелкая сетка по маршруту — один раз на маршрут.
+  useEffect(() => {
+    if (!layers.clouds || !route || routeCloudGrid) return;
+
+    let cancelled = false;
+    fetchRouteCloudGrid(route.routePoints)
+      .then((grid) => {
+        if (!cancelled) setRouteCloudGrid(grid);
+      })
+      .catch((e) => console.warn("Облачность недоступна:", e));
+    return () => {
+      cancelled = true;
+    };
+  }, [layers.clouds, route, routeCloudGrid]);
+
   const score: RouteScore | null = useMemo(() => {
     if (!route || !windPoints || !rideStart) return null;
     return scoreRoute(route.routePoints, windPoints, rideStart, rider);
   }, [route, windPoints, rideStart, rider]);
+
+  const routeDistanceKm = route
+    ? (route.routePoints[route.routePoints.length - 1]?.distanceFromStart ?? 0) /
+      1000
+    : null;
 
   const windSummary = useMemo(
     () => (score ? summarizeWind(score.segments) : null),
@@ -242,10 +344,15 @@ function RadarScreen() {
     [],
   );
 
-  // Картинка поля облачности строится за считанные миллисекунды, поэтому
-  // пересобирается прямо на каждый шаг таймлайна и кладётся во временный файл.
-  // Без маршрута используем поле вокруг геолокации, чтобы слой был виден сразу.
-  const activeCloudGrid = cloudGrid ?? defaultCloudGrid;
+  // Картинки поля облачности строятся за считанные миллисекунды, поэтому
+  // пересобираются прямо на каждый шаг таймлайна и кладутся во временные
+  // файлы. Слои от грубого к мелкому: тайлы под экран, сверху сетка по треку.
+  const activeCloudGrids = useMemo(() => {
+    const grids: CloudGrid[] = [];
+    if (tileCloudGrid) grids.push(tileCloudGrid.grid);
+    if (routeCloudGrid) grids.push(routeCloudGrid);
+    return grids.length > 0 ? grids : null;
+  }, [tileCloudGrid, routeCloudGrid]);
 
   // На прошлое и «сейчас» облачность показывается снимком Meteosat, и модельное
   // поле для этих моментов не нужно — оно рисуется только дальше в будущее,
@@ -256,16 +363,18 @@ function RadarScreen() {
   );
 
   const cloudField = useMemo<CloudField | null>(() => {
-    if (!activeCloudGrid || !mapTime || satelliteFrame) return null;
+    if (!layers.clouds || !activeCloudGrids || !mapTime || satelliteFrame) {
+      return null;
+    }
     try {
-      return writeCloudField(activeCloudGrid, mapTime.getTime());
+      return writeCloudField(activeCloudGrids, mapTime.getTime());
     } catch (e) {
       console.warn("Слой облачности недоступен:", String(e));
       return null;
     }
     // Кадр снимка меняется реже, чем `mapTime`, но зависимость нужна: без неё
     // модельное поле не пересобралось бы на переходе «снимок → прогноз».
-  }, [activeCloudGrid, mapTime, satelliteFrame]);
+  }, [layers.clouds, activeCloudGrids, mapTime, satelliteFrame]);
 
   const toggleLayer = useCallback(
     (key: keyof MapLayers) =>
@@ -300,6 +409,7 @@ function RadarScreen() {
       <RadarMap
         ref={mapRef}
         segments={score?.segments ?? []}
+        track={route?.routePoints ?? EMPTY_TRACK}
         radarIndex={radarIndex}
         radarFrame={radarFrame}
         radarOpacity={OPACITY_STEPS[opacityStep]}
@@ -307,7 +417,8 @@ function RadarScreen() {
         cloudField={cloudField}
         satelliteFrame={satelliteFrame}
         layers={layers}
-        defaultRegion={defaultRegion}
+        defaultRegion={defaultRegion ?? FALLBACK_REGION}
+        onViewportChange={setViewport}
       />
 
       {/* Панели идут от края до края и заходят под статус-бар — так же выглядят
@@ -315,7 +426,10 @@ function RadarScreen() {
       <View style={styles.overlay} pointerEvents="box-none">
         <RouteHeader
           routeName={routeName}
+          distanceKm={routeDistanceKm}
           score={score}
+          forecastError={forecastError}
+          onRetryForecast={retryForecast}
           avgWindSpeed={windSummary?.avgSpeed ?? 0}
           avgWindDirection={windSummary?.avgDirection ?? 0}
           loading={loading}
@@ -357,8 +471,9 @@ function RadarScreen() {
         ) : (
           <View style={[styles.hint, { paddingBottom: insets.bottom + 16 }]}>
             <Text style={styles.hintText}>
-              Загрузите GPX — карта покажет радар осадков и то, где вы будете в
-              каждый момент поездки.
+              {route
+                ? "Без прогноза по маршруту не посчитать время в пути и ветер. Радар показывает осадки на сейчас."
+                : "Загрузите GPX — карта покажет радар осадков и то, где вы будете в каждый момент поездки."}
             </Text>
             <Text style={styles.credits}>{MAP_CREDITS}</Text>
           </View>

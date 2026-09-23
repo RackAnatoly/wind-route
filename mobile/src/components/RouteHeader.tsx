@@ -6,7 +6,11 @@ import { theme } from "../theme";
 
 interface RouteHeaderProps {
   routeName: string | null;
+  // Длина трека из GPX — известна и без прогноза.
+  distanceKm: number | null;
   score: RouteScore | null;
+  // Почему нет прогноза по маршруту; null — прогноз есть или ещё грузится.
+  forecastError: string | null;
   avgWindSpeed: number;
   avgWindDirection: number;
   loading: boolean;
@@ -17,11 +21,14 @@ interface RouteHeaderProps {
   onLoadDemo: () => void;
   onOpenRider: () => void;
   onOpenDodge: () => void;
+  onRetryForecast: () => void;
 }
 
 export function RouteHeader({
   routeName,
+  distanceKm,
   score,
+  forecastError,
   avgWindSpeed,
   avgWindDirection,
   loading,
@@ -32,11 +39,8 @@ export function RouteHeader({
   onLoadDemo,
   onOpenRider,
   onOpenDodge,
+  onRetryForecast,
 }: RouteHeaderProps) {
-  const totalKm =
-    score && score.segments.length > 0
-      ? score.segments[score.segments.length - 1].end.distanceFromStart / 1000
-      : 0;
 
   return (
     <View style={[styles.container, { paddingTop: topInset + 6 }]}>
@@ -45,11 +49,16 @@ export function RouteHeader({
           <Text style={styles.title} numberOfLines={1}>
             {routeName ?? "Маршрут не загружен"}
           </Text>
-          {score && (
+          {score ? (
             <Text style={styles.subtitle}>
-              {totalKm.toFixed(0)} км · {formatDuration(score.durationSeconds)} ·{" "}
+              {(distanceKm ?? 0).toFixed(0)} км ·{" "}
+              {formatDuration(score.durationSeconds)} ·{" "}
               {score.avgSpeedKmh.toFixed(1)} км/ч
             </Text>
+          ) : (
+            distanceKm !== null && (
+              <Text style={styles.subtitle}>{distanceKm.toFixed(0)} км</Text>
+            )
           )}
         </View>
 
@@ -84,8 +93,23 @@ export function RouteHeader({
             <Text style={styles.riderLink}>Профиль: {riderLabel} →</Text>
           </Pressable>
         </View>
+      ) : forecastError ? (
+        // Трек уже на карте, но без прогноза ни времени, ни цены ветра не
+        // посчитать — говорим почему и даём повторить, не перезагружая GPX.
+        <View style={styles.statsRow}>
+          {/* Сетевые ошибки iOS бывают на полэкрана — хватит начала. */}
+          <Text style={styles.stat} numberOfLines={2}>
+            Прогноз недоступен. {forecastError}
+          </Text>
+          {!loading && (
+            <Pressable onPress={onRetryForecast} accessibilityRole="button">
+              <Text style={styles.demoLink}>Повторить →</Text>
+            </Pressable>
+          )}
+        </View>
       ) : (
-        !loading && (
+        !loading &&
+        !routeName && (
           <Pressable onPress={onLoadDemo} accessibilityRole="button">
             <Text style={styles.demoLink}>Открыть демо-маршрут →</Text>
           </Pressable>

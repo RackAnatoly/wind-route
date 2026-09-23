@@ -31,13 +31,18 @@ import {
   satelliteTileUrl,
 } from "@shared/satellite";
 import type { ScoredSegment } from "@shared/types";
+import type { Bounds } from "@shared/clouds";
 import type { CloudField } from "../lib/cloudImage";
 import {
   CLOUD_ANCHOR_LAYER,
   MAP_STYLE,
   RADAR_ANCHOR_LAYER,
 } from "../lib/mapStyle";
-import { buildRouteChunks, routeCoordinates } from "../lib/routeChunks";
+import {
+  buildRouteChunks,
+  plainRouteChunks,
+  routeCoordinates,
+} from "../lib/routeChunks";
 import {
   CLOUD_FADE_MS as FADE_MS,
   CLOUD_PRELOAD_MS as PRELOAD_MS,
@@ -61,6 +66,9 @@ export interface RadarMapHandle {
 
 interface RadarMapProps {
   segments: ScoredSegment[];
+  // Геометрия трека — рисуется, пока сегментов с ветром нет (прогноз ещё
+  // грузится или недоступен): маршрут на карте не должен зависеть от погоды.
+  track: { lat: number; lon: number }[];
   radarIndex: RadarIndex | null;
   // Кадр радара на отображаемый момент; null — момент вне покрытия радара.
   radarFrame: RadarFrame | null;
@@ -73,6 +81,9 @@ interface RadarMapProps {
   layers: MapLayers;
   // Камера на старте и пока маршрут не загружен — геолокация или фолбэк.
   defaultRegion: MapRegion;
+  // Видимая область после каждого движения камеры — по ней подгружается
+  // модельная облачность.
+  onViewportChange?: (bounds: Bounds) => void;
 }
 
 const ZOOM_STEP = 1;
@@ -226,20 +237,26 @@ function CloudLayer({
     );
   }
 
+  // Картинок в кадре несколько — по одной на сетку, от грубой к мелкой; порядок
+  // монтирования и задаёт порядок слоёв, мелкая ложится поверх.
   return (
-    <ImageSource
-      key={content.key}
-      id={sourceId}
-      url={content.field.uri}
-      coordinates={content.field.coordinates}
-    >
-      <Layer
-        id={`${sourceId}-layer`}
-        type="raster"
-        beforeId={CLOUD_ANCHOR_LAYER}
-        paint={paint}
-      />
-    </ImageSource>
+    <>
+      {content.field.images.map((image, i) => (
+        <ImageSource
+          key={`${content.key}-${i}`}
+          id={`${sourceId}-${i}`}
+          url={image.uri}
+          coordinates={image.coordinates}
+        >
+          <Layer
+            id={`${sourceId}-${i}-layer`}
+            type="raster"
+            beforeId={CLOUD_ANCHOR_LAYER}
+            paint={paint}
+          />
+        </ImageSource>
+      ))}
+    </>
   );
 }
 
@@ -247,6 +264,7 @@ export const RadarMap = forwardRef<RadarMapHandle, RadarMapProps>(
   function RadarMap(
     {
       segments,
+      track,
       radarIndex,
       radarFrame,
       radarOpacity,
@@ -255,6 +273,7 @@ export const RadarMap = forwardRef<RadarMapHandle, RadarMapProps>(
       satelliteFrame,
       layers,
       defaultRegion,
+      onViewportChange,
     },
     ref,
   ) {
@@ -263,8 +282,18 @@ export const RadarMap = forwardRef<RadarMapHandle, RadarMapProps>(
     // лишний рендер на каждый жест панорамирования.
     const zoomRef = useRef(defaultRegion.zoom);
 
-    const coordinates = routeCoordinates(segments);
-    const chunks = buildRouteChunks(segments);
+    const scored = segments.length > 0;
+    const coordinates = useMemo(
+      () =>
+        scored
+          ? routeCoordinates(segments)
+          : track.map((p) => ({ latitude: p.lat, longitude: p.lon })),
+      [scored, segments, track],
+    );
+    const chunks = useMemo(
+      () => (scored ? buildRouteChunks(segments) : plainRouteChunks(coordinates)),
+      [scored, segments, coordinates],
+    );
 
     const zoomBy = useCallback((delta: number) => {
       const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoomRef.current + delta));
@@ -332,7 +361,7 @@ export const RadarMap = forwardRef<RadarMapHandle, RadarMapProps>(
         };
       }
       if (cloudField) {
-        return { kind: "model", key: `model-${cloudField.uri}`, field: cloudField };
+        return { kind: "model", key: `model-${cloudField.key}`, field: cloudField };
       }
       return null;
     }, [layers.clouds, satelliteFrame, cloudField]);
@@ -371,6 +400,8 @@ export const RadarMap = forwardRef<RadarMapHandle, RadarMapProps>(
         touchPitch={false}
         onRegionDidChange={(e) => {
           zoomRef.current = e.nativeEvent.zoom;
+          const [west, south, east, north] = e.nativeEvent.bounds;
+          onViewportChange?.({ west, south, east, north });
         }}
       >
         <Camera

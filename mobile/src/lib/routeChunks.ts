@@ -63,6 +63,12 @@ export function buildRouteChunks(segments: ScoredSegment[]): RouteChunk[] {
   return chunks;
 }
 
+// Трек без прогноза: ветер не посчитан, поэтому одним нейтральным куском —
+// тем же цветом, что штиль в раскраске выше.
+export function plainRouteChunks(coordinates: LatLng[]): RouteChunk[] {
+  return coordinates.length > 1 ? [{ coordinates, color: colorOf(0) }] : [];
+}
+
 export function routeCoordinates(segments: ScoredSegment[]): LatLng[] {
   if (segments.length === 0) return [];
   return [

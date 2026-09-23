@@ -7,7 +7,12 @@ import { TimeSlider } from "./components/TimeSlider";
 import { RidePlayback } from "./components/RidePlayback";
 import { RainWindows } from "./components/RainWindows";
 import { parseGpx, type ParsedRoute } from "@shared/gpx";
-import { fetchRouteWind, type RouteWindPoint } from "@shared/wind";
+import {
+  attachWindCacheStore,
+  fetchRouteWind,
+  type RouteWindPoint,
+} from "@shared/wind";
+import { localCacheStore } from "./cacheStore";
 import {
   fetchRadarIndex,
   frameAt,
@@ -25,6 +30,9 @@ import type { RouteScore } from "@shared/types";
 import "./App.css";
 
 type Status = "idle" | "loading" | "error";
+
+// Прогноз по маршруту переживает перезагрузку страницы.
+attachWindCacheStore(localCacheStore("route-wind"));
 
 // Индекс кадров радара обновляется каждые 10 минут — перечитываем чуть чаще.
 const RADAR_REFRESH_MS = 5 * 60 * 1000;

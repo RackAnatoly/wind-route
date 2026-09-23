@@ -4,9 +4,25 @@
     {
       "name": "wind-route-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 5173,
       "autoPort": true
+    },
+    {
+      "name": "mobile-metro",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "mobile",
+        "start",
+        "--",
+        "--port",
+        "8082"
+      ],
+      "port": 8082
     }
   ]
 }

@@ -1,7 +1,31 @@
+import { createCache, type CacheStore } from "./cache";
+import { requestOpenMeteo } from "./openMeteo";
 import type { PrecipSample, RoutePoint, WindForecast } from "./types";
 
-const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
 const SAMPLE_POINTS_COUNT = 12;
+
+// Прогноз по точкам маршрута кэшируется на час — с таким шагом он и
+// обновляется. Ключ — сами точки выборки: тот же GPX даёт те же 12 точек,
+// а значит, повторное открытие маршрута (и перезапуск приложения) квоту
+// не тратит. Записей — на несколько маршрутов за день.
+const CACHE_TTL_MS = 60 * 60_000;
+const CACHE_MAX_ENTRIES = 8;
+
+type RouteSeries = { forecasts: WindForecast[]; precip: PrecipSample[] }[];
+
+const cache = createCache<RouteSeries>({
+  ttlMs: CACHE_TTL_MS,
+  maxEntries: CACHE_MAX_ENTRIES,
+});
+
+// Приложение подключает хранилище само: в mobile это файл, у веба — localStorage.
+export function attachWindCacheStore(store: CacheStore): void {
+  cache.attachStore(store);
+}
+
+function cacheKey(points: RoutePoint[]): string {
+  return points.map((p) => `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`).join(";");
+}
 
 export interface RouteWindPoint {
   point: RoutePoint;
@@ -59,20 +83,12 @@ function toForecasts(data: OpenMeteoResponse): WindForecast[] {
   }));
 }
 
-// Строку запроса собираем вручную: реализация URL/URLSearchParams в React Native
-// неполная, а этот модуль общий для веба и мобильного приложения.
-function buildQuery(params: Record<string, string>): string {
-  return Object.entries(params)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
-}
-
 // Open-Meteo принимает несколько координат через запятую и отвечает массивом —
 // весь маршрут забираем одним запросом вместо N параллельных.
 async function fetchForecasts(
   points: RoutePoint[],
 ): Promise<{ forecasts: WindForecast[]; precip: PrecipSample[] }[]> {
-  const query = buildQuery({
+  const data = await requestOpenMeteo<OpenMeteoResponse | OpenMeteoResponse[]>({
     latitude: points.map((p) => p.lat.toFixed(4)).join(","),
     longitude: points.map((p) => p.lon.toFixed(4)).join(","),
     hourly:
@@ -82,13 +98,6 @@ async function fetchForecasts(
     forecast_days: "3",
     timezone: "GMT",
   });
-
-  const res = await fetch(`${OPEN_METEO_URL}?${query}`);
-  if (!res.ok) {
-    throw new Error(`Open-Meteo вернул ошибку ${res.status}`);
-  }
-
-  const data = (await res.json()) as OpenMeteoResponse | OpenMeteoResponse[];
   const list = Array.isArray(data) ? data : [data];
   return list.map((entry) => ({
     forecasts: toForecasts(entry),
@@ -119,7 +128,9 @@ export async function fetchRouteWind(
     SAMPLE_POINTS_COUNT,
   );
 
-  const series = await fetchForecasts(samplePoints);
+  const series = await cache.resolve(cacheKey(samplePoints), () =>
+    fetchForecasts(samplePoints),
+  );
 
   return samplePoints.map((point, i) => ({
     point,
