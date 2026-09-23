@@ -269,11 +269,16 @@ function RadarScreen() {
   // он не отпускал бы вообще. По истечении паузы эффект будится сам.
   const tileRetryAfterRef = useRef(0);
   const [tileRetryTick, setTileRetryTick] = useState(0);
+  // null и при экране шире потолка тайлов — тогда модельное поле прячется.
+  const tileSet = useMemo(
+    () => (viewport ? cloudTilesFor(viewport) : null),
+    [viewport],
+  );
   useEffect(() => {
-    if (!layers.clouds || !viewport) return;
+    if (!layers.clouds || !tileSet) return;
     if (!defaultRegion && !route) return; // камера ещё не там, где надо
-    const set = cloudTilesFor(viewport);
-    if (!set || tileCloudGrid?.key === set.key) return;
+    const set = tileSet;
+    if (tileCloudGrid?.key === set.key) return;
 
     const wait = tileRetryAfterRef.current - Date.now();
     if (wait > 0) {
@@ -294,7 +299,7 @@ function RadarScreen() {
     return () => {
       cancelled = true;
     };
-  }, [layers.clouds, viewport, tileCloudGrid, defaultRegion, route, tileRetryTick]);
+  }, [layers.clouds, tileSet, tileCloudGrid, defaultRegion, route, tileRetryTick]);
 
   // Мелкая сетка по маршруту — один раз на маршрут.
   useEffect(() => {
@@ -347,12 +352,19 @@ function RadarScreen() {
   // Картинки поля облачности строятся за считанные миллисекунды, поэтому
   // пересобираются прямо на каждый шаг таймлайна и кладутся во временные
   // файлы. Слои от грубого к мелкому: тайлы под экран, сверху сетка по треку.
+  //
+  // Экран шире потолка тайлов — модельное поле прячем целиком: последнее
+  // загруженное закрывает лишь часть экрана, и его прямоугольный край
+  // режет карту. Приложение про маршрут, облачность на континент ему не нужна;
+  // слой уходит тем же кроссфейдом и возвращается при приближении.
+  const beyondTileCap = viewport !== null && tileSet === null;
   const activeCloudGrids = useMemo(() => {
+    if (beyondTileCap) return null;
     const grids: CloudGrid[] = [];
     if (tileCloudGrid) grids.push(tileCloudGrid.grid);
     if (routeCloudGrid) grids.push(routeCloudGrid);
     return grids.length > 0 ? grids : null;
-  }, [tileCloudGrid, routeCloudGrid]);
+  }, [beyondTileCap, tileCloudGrid, routeCloudGrid]);
 
   // На прошлое и «сейчас» облачность показывается снимком Meteosat, и модельное
   // поле для этих моментов не нужно — оно рисуется только дальше в будущее,

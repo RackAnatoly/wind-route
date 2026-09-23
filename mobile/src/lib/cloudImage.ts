@@ -81,7 +81,14 @@ function sample(
 const FEATHER_RATIO = 0.12;
 const FEATHER_MAX_DEG = 0.12;
 
-// 0 за пределами сетки, 1 в глубине, между ними — линейно по полосе.
+// Подъём от 0 у края сетки до 1 у края ядра по одной стороне.
+function ramp(distance: number, width: number): number {
+  if (width <= 0) return 1;
+  const x = Math.max(0, Math.min(1, distance / width));
+  return x * x * (3 - 2 * x); // сглаженная ступенька — без излома на краю ядра
+}
+
+// 0 за пределами сетки, 1 в глубине, между ними — плавный подъём.
 function insetWeight(grid: CloudGrid, lat: number, lon: number): number {
   const inset = Math.min(
     lat - grid.south,
@@ -90,6 +97,21 @@ function insetWeight(grid: CloudGrid, lat: number, lon: number): number {
     grid.east - lon,
   );
   if (inset <= 0) return 0;
+
+  // С ядром гаснем через весь запас: облако, которое мелкая сетка видит у
+  // своего края, а грубая — нет, растворяется, а не обрывается прямой линией.
+  // Стороны перемножаются, а не берутся по минимуму — углы выходят круглыми,
+  // и прямоугольник сетки не читается.
+  const core = grid.core;
+  if (core) {
+    return (
+      ramp(lat - grid.south, core.south - grid.south) *
+      ramp(grid.north - lat, grid.north - core.north) *
+      ramp(lon - grid.west, core.west - grid.west) *
+      ramp(grid.east - lon, grid.east - core.east)
+    );
+  }
+
   const feather = Math.min(
     FEATHER_MAX_DEG,
     FEATHER_RATIO * Math.min(grid.north - grid.south, grid.east - grid.west),

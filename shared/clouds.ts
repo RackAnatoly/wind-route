@@ -82,13 +82,18 @@ export interface CloudGrid {
   west: number;
   north: number;
   east: number;
+  // Ядро, которое сетка обязана покрыть в полную силу, — у мелкой сетки по
+  // маршруту это сам трек без запаса. Снаружи ядра, в запасе, поле плавно
+  // гаснет к краю сетки и отдаёт место грубому слою под ней. Без ядра край
+  // гасится узкой полосой (см. cloudImage).
+  core?: Bounds;
 }
 
 interface CloudResponse {
   hourly: { time: string[]; cloud_cover: (number | null)[] };
 }
 
-function routeBounds(points: RoutePoint[]): Bounds {
+function routeBounds(points: RoutePoint[]): { outer: Bounds; core: Bounds } {
   let south = Infinity;
   let north = -Infinity;
   let west = Infinity;
@@ -111,10 +116,13 @@ function routeBounds(points: RoutePoint[]): Bounds {
   );
 
   return {
-    south: south - padLat,
-    north: north + padLat,
-    west: west - padLon,
-    east: east + padLon,
+    outer: {
+      south: south - padLat,
+      north: north + padLat,
+      west: west - padLon,
+      east: east + padLon,
+    },
+    core: { south, north, west, east },
   };
 }
 
@@ -255,10 +263,13 @@ export interface Bounds {
 }
 
 // Мелкая сетка по маршруту — ложится поверх тайлов.
-export function fetchRouteCloudGrid(
+export async function fetchRouteCloudGrid(
   routePoints: RoutePoint[],
 ): Promise<CloudGrid> {
-  return fetchCloudGridForBounds(routeBounds(routePoints));
+  const { outer, core } = routeBounds(routePoints);
+  // Ядро в кэш не попадает: оно считается из маршрута, а не приходит с сервера.
+  const grid = await fetchCloudGridForBounds(outer);
+  return { ...grid, core };
 }
 
 // Тот же запрос, но по произвольному bbox — используется для дефолтного вида
