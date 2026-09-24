@@ -1,5 +1,15 @@
 import { Directory, File, Paths } from "expo-file-system";
-import { cloudSliceAt, type CloudGrid } from "@shared/clouds";
+import {
+  cloudSliceAt,
+  precipSliceAt,
+  type CloudGrid,
+} from "@shared/clouds";
+import {
+  CLOUD_MAX_OPACITY,
+  CLOUD_SHADOW_DENSE,
+  CLOUD_SHADOW_THIN,
+} from "@shared/cloudTone";
+import { RADAR_SCALE } from "../theme";
 import { encodeRgbaPng } from "./png";
 
 // Модельное поле облачности — на будущее, куда не достаёт снимок спутника.
@@ -18,7 +28,57 @@ const IMAGE_PX = 256;
 const CLEAR_THRESHOLD = 28; // %, ниже — рисуем чистое небо
 const OVERCAST_LEVEL = 92; // %, выше — сплошная облачность
 const CONTRAST_GAMMA = 1.5;
-const MAX_ALPHA = 235;
+
+// Как раскрасить значение сетки: цвет и непрозрачность (0..1) либо null —
+// пиксель пустой. Отрисовка одна на облака и дождь, отличается только этим.
+type Shade = (value: number) => [r: number, g: number, b: number, a: number] | null;
+
+// Облачность — тень: чем плотнее, тем темнее и гуще.
+const cloudShade: Shade = (cover) => {
+  const linear = Math.max(
+    0,
+    Math.min(1, (cover - CLEAR_THRESHOLD) / (OVERCAST_LEVEL - CLEAR_THRESHOLD)),
+  );
+  if (linear <= 0) return null;
+  const density = Math.pow(linear, CONTRAST_GAMMA);
+  const tone = (c: number) =>
+    Math.round(
+      CLOUD_SHADOW_THIN[c] + (CLOUD_SHADOW_DENSE[c] - CLOUD_SHADOW_THIN[c]) * density,
+    );
+  return [tone(0), tone(1), tone(2), density * CLOUD_MAX_OPACITY];
+};
+
+// Дождь — цветами радара, чтобы на стыке «радар → прогноз» он не менял вид.
+// Ступени шкалы RainViewer заданы в dBZ; в мм/ч их переводит формула
+// Маршалла–Палмера (Z = 200·R^1,6), которой радары и считают интенсивность:
+// 10 dBZ ≈ 0,15 мм/ч, 20 ≈ 0,6, 30 ≈ 2,7, 40 ≈ 11, 45 ≈ 24, 50 ≈ 49.
+// Модель усредняет осадки по ячейке в десяток километров, поэтому ливни в ней
+// мягче, чем на радаре, — верхние ступени встречаются редко.
+const RAIN_STEPS_MM = [0.1, 0.6, 2.7, 11, 24, 49];
+// Модель размазывает морось ~0,1 мм/ч по ячейкам в десяток километров: в полную
+// силу она легла бы ровной голубой заливкой на весь экран, хотя радар в это
+// время видит сухую сушу. Поэтому слабые осадки проявляются постепенно: ниже
+// 0,1 мм/ч — сухо, к 0,4 мм/ч — в полную силу, как на радаре.
+const RAIN_FADE_FROM_MM = 0.1;
+const RAIN_FADE_TO_MM = 0.4;
+const RAIN_OPACITY = 0.9; // полностью непрозрачным не делаем — под дождём видны дороги
+const RAIN_RGB = RADAR_SCALE.map((hex) => [
+  parseInt(hex.slice(1, 3), 16),
+  parseInt(hex.slice(3, 5), 16),
+  parseInt(hex.slice(5, 7), 16),
+]);
+
+const rainShade: Shade = (mm) => {
+  if (mm < RAIN_FADE_FROM_MM) return null;
+  let step = 0;
+  while (step + 1 < RAIN_STEPS_MM.length && mm >= RAIN_STEPS_MM[step + 1]) step++;
+  const fade = Math.min(
+    1,
+    (mm - RAIN_FADE_FROM_MM) / (RAIN_FADE_TO_MM - RAIN_FADE_FROM_MM),
+  );
+  const [r, g, b] = RAIN_RGB[step];
+  return [r, g, b, fade * RAIN_OPACITY];
+};
 
 export interface CloudImage {
   uri: string;
@@ -125,6 +185,7 @@ function render(
   slice: number[],
   finer: CloudGrid[],
   softEdge: boolean,
+  shade: Shade,
 ): Uint8Array {
   const cols = grid.longitudes.length;
   const rows = grid.latitudes.length;
@@ -150,16 +211,9 @@ function render(
       const own = softEdge ? insetWeight(grid, lat, lon) : 1;
       if (own <= 0) continue;
 
-      const cover = sample(slice, cols, rows, u, v);
-      const linear = Math.max(
-        0,
-        Math.min(
-          1,
-          (cover - CLEAR_THRESHOLD) / (OVERCAST_LEVEL - CLEAR_THRESHOLD),
-        ),
-      );
-      const density = Math.pow(linear, CONTRAST_GAMMA);
-      const alpha = (density * MAX_ALPHA) / 255;
+      const color = shade(sample(slice, cols, rows, u, v));
+      if (!color) continue;
+      const alpha = color[3];
 
       // Под мелкой сеткой гаснем не линейно, а с поправкой на то, что мелкая
       // ложится сверху: при её плотности t·A и нашей A·(1−t)/(1−t·A) сумма
@@ -167,16 +221,14 @@ function render(
       let weight = own;
       for (const g of finer) {
         const t = insetWeight(g, lat, lon);
-        weight *= (1 - t) / (1 - t * alpha);
+        const rest = 1 - t * alpha;
+        weight *= rest > 1e-6 ? (1 - t) / rest : 0;
       }
       if (weight <= 0) continue;
 
-      // Тон подогнан под снимок: плотная облачность почти белая, тонкая —
-      // сероватая. Иначе на стыке «снимок → прогноз» цвет заметно прыгает.
-      const tone = 250 - Math.round(density * 34);
-      rgba[i] = tone;
-      rgba[i + 1] = tone;
-      rgba[i + 2] = Math.min(255, tone + 4); // чуть холоднее серого
+      rgba[i] = color[0];
+      rgba[i + 1] = color[1];
+      rgba[i + 2] = color[2];
       rgba[i + 3] = Math.round(alpha * weight * 255);
     }
   }
@@ -187,30 +239,33 @@ function render(
 // Сколько последних картинок держим на диске. Удалять предыдущую сразу нельзя:
 // при перемотке времени слой ещё несколько сотен миллисекунд показывает старый
 // кадр, пока проявляется новый, — и файл под ним исчезал бы прямо во время
-// проявления. Кадр — это по картинке на сетку, обычно две; четырёх кадров
-// хватает на кроссфейд и быструю перемотку туда-обратно.
-const KEEP_FILES = 8;
+// проявления. Кадр — это по картинке на сетку, обычно две, и на облака и на
+// дождь отдельно; четырёх кадров хватает на кроссфейд и быструю перемотку
+// туда-обратно.
+const KEEP_FILES = 16;
 
 const written: string[] = [];
 let cleanedStale = false;
 
 function writeImage(
   root: Directory,
+  kind: string,
   grid: CloudGrid,
   slice: number[],
   finer: CloudGrid[],
   softEdge: boolean,
   targetMs: number,
+  shade: Shade,
 ): CloudImage {
   // Срез почасовой, поэтому час вместе с границами однозначно задаёт картинку.
   // Дыра под мелкими сетками входит в имя через их границы — иначе картинка
   // без дыры от старого набора сеток подошла бы по имени к новому.
   const hole = finer.map((g) => `${g.south.toFixed(2)}-${g.west.toFixed(2)}`).join("_");
-  const name = `${Math.round(targetMs / 3600_000)}-${grid.south.toFixed(2)}-${grid.west.toFixed(2)}-${grid.north.toFixed(2)}-${grid.east.toFixed(2)}${hole ? `-h${hole}` : ""}.png`;
+  const name = `${kind}-${Math.round(targetMs / 3600_000)}-${grid.south.toFixed(2)}-${grid.west.toFixed(2)}-${grid.north.toFixed(2)}-${grid.east.toFixed(2)}${hole ? `-h${hole}` : ""}.png`;
   const file = new File(root, name);
   if (!file.exists) {
     file.create({ overwrite: true });
-    file.write(render(grid, slice, finer, softEdge));
+    file.write(render(grid, slice, finer, softEdge, shade));
   }
 
   // Иначе кэш рос бы неограниченно: за поездку набегают десятки часовых срезов.
@@ -238,7 +293,25 @@ export function writeCloudField(
   grids: CloudGrid[],
   targetMs: number,
 ): CloudField | null {
-  const slices = grids.map((g) => cloudSliceAt(g, targetMs));
+  return writeField("cloud", grids, targetMs, cloudSliceAt, cloudShade);
+}
+
+// Прогноз дождя — на моменты, куда не достаёт радар.
+export function writeRainField(
+  grids: CloudGrid[],
+  targetMs: number,
+): CloudField | null {
+  return writeField("rain", grids, targetMs, precipSliceAt, rainShade);
+}
+
+function writeField(
+  kind: string,
+  grids: CloudGrid[],
+  targetMs: number,
+  sliceAt: (grid: CloudGrid, targetMs: number) => number[],
+  shade: Shade,
+): CloudField | null {
+  const slices = grids.map((g) => sliceAt(g, targetMs));
   if (slices.some((s) => s.length === 0)) return null;
 
   const root = new Directory(Paths.cache, CACHE_DIR);
@@ -253,7 +326,16 @@ export function writeCloudField(
   }
 
   const images = grids.map((grid, i) =>
-    writeImage(root, grid, slices[i], grids.slice(i + 1), i > 0, targetMs),
+    writeImage(
+      root,
+      kind,
+      grid,
+      slices[i],
+      grids.slice(i + 1),
+      i > 0,
+      targetMs,
+      shade,
+    ),
   );
   return { key: images.map((img) => img.uri).join("|"), images };
 }

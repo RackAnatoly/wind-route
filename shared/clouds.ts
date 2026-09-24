@@ -65,11 +65,14 @@ export function attachCloudCacheStore(store: CacheStore): void {
 
 // Размер сетки — часть ключа: соседние тайлы сшиваются по общим узлам, и
 // сетка на 16 узлов из старого кэша с сеткой на 12 рядом не уживётся.
+// Версия — тоже в ключе: у старых записей нет осадков, подхватывать их нельзя.
+const CACHE_VERSION = 2;
+
 function cacheKey({ south, west, north, east }: Bounds): string {
   const bounds = [south, west, north, east]
     .map((v) => (Math.round(v / CACHE_KEY_STEP_DEG) * CACHE_KEY_STEP_DEG).toFixed(2))
     .join(",");
-  return `${GRID_SIZE}:${bounds}`;
+  return `v${CACHE_VERSION}:${GRID_SIZE}:${bounds}`;
 }
 
 export interface CloudGrid {
@@ -77,7 +80,10 @@ export interface CloudGrid {
   longitudes: number[]; // по возрастанию, с запада на восток
   times: string[]; // ISO, UTC, почасовые
   // Для каждого часа — плоский массив длиной latitudes * longitudes.
-  cover: number[][];
+  cover: number[][]; // облачность, %
+  // Осадки, мм за час — прогноз дождя на карте дальше, чем достаёт радар.
+  // Берутся тем же запросом: вторая переменная квоту Open-Meteo не меняет.
+  precip: number[][];
   south: number;
   west: number;
   north: number;
@@ -90,7 +96,11 @@ export interface CloudGrid {
 }
 
 interface CloudResponse {
-  hourly: { time: string[]; cloud_cover: (number | null)[] };
+  hourly: {
+    time: string[];
+    cloud_cover: (number | null)[];
+    precipitation: (number | null)[];
+  };
 }
 
 function routeBounds(points: RoutePoint[]): { outer: Bounds; core: Bounds } {
@@ -206,7 +216,7 @@ function mergeTiles(
   );
 
   const width = longitudes.length;
-  const cover = base.times.map((_, k) => {
+  const merge = (field: "cover" | "precip") => base.times.map((_, k) => {
     const slice = new Array<number>(latitudes.length * width).fill(0);
     let latBase = 0;
     for (let r = 0; r < rows; r++) {
@@ -215,8 +225,8 @@ function mergeTiles(
       for (let c = 0; c < cols; c++) {
         const tile = tiles[r][c];
         const tileCols = tile.longitudes.length;
-        const kk = Math.max(0, Math.min(tile.cover.length - 1, k - offsets[r][c]));
-        const src = tile.cover[kk];
+        const kk = Math.max(0, Math.min(tile[field].length - 1, k - offsets[r][c]));
+        const src = tile[field][kk];
         for (let y = 0; y < tileRows; y++) {
           for (let x = 0; x < tileCols; x++) {
             slice[(latBase + y) * width + lonBase + x] = src[y * tileCols + x];
@@ -235,7 +245,8 @@ function mergeTiles(
     latitudes,
     longitudes,
     times: base.times,
-    cover,
+    cover: merge("cover"),
+    precip: merge("precip"),
     south: latitudes[0],
     north: latitudes[latitudes.length - 1],
     west: longitudes[0],
@@ -308,7 +319,7 @@ async function requestCloudGrid({
   const data = await requestOpenMeteo<CloudResponse | CloudResponse[]>({
     latitude: lats.map((v) => v.toFixed(4)).join(","),
     longitude: lons.map((v) => v.toFixed(4)).join(","),
-    hourly: "cloud_cover",
+    hourly: "cloud_cover,precipitation",
     forecast_days: "3",
     timezone: "GMT",
   });
@@ -318,13 +329,28 @@ async function requestCloudGrid({
   const cover = times.map((_, timeIndex) =>
     list.map((entry) => entry.hourly.cloud_cover[timeIndex] ?? 0),
   );
+  const precip = times.map((_, timeIndex) =>
+    list.map((entry) => entry.hourly.precipitation[timeIndex] ?? 0),
+  );
 
-  return { latitudes, longitudes, times, cover, south, west, north, east };
+  return { latitudes, longitudes, times, cover, precip, south, west, north, east };
 }
 
 // Срез поля на ближайший час. Ряд времён равномерный, поэтому индекс считается,
 // а не ищется перебором.
 export function cloudSliceAt(grid: CloudGrid, targetMs: number): number[] {
+  return sliceAt(grid, "cover", targetMs);
+}
+
+export function precipSliceAt(grid: CloudGrid, targetMs: number): number[] {
+  return sliceAt(grid, "precip", targetMs);
+}
+
+function sliceAt(
+  grid: CloudGrid,
+  field: "cover" | "precip",
+  targetMs: number,
+): number[] {
   if (grid.times.length === 0) return [];
 
   const startMs = new Date(grid.times[0]).getTime();
@@ -334,5 +360,6 @@ export function cloudSliceAt(grid: CloudGrid, targetMs: number): number[] {
       : 3600_000;
 
   const i = Math.round((targetMs - startMs) / (stepMs > 0 ? stepMs : 3600_000));
-  return grid.cover[Math.max(0, Math.min(grid.cover.length - 1, i))];
+  const series = grid[field];
+  return series[Math.max(0, Math.min(series.length - 1, i))];
 }

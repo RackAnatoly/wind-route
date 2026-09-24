@@ -1,0 +1,20 @@
+diff --git a/node_modules/@maplibre/maplibre-react-native/ios/modules/logging/MLRNLogModule.mm b/node_modules/@maplibre/maplibre-react-native/ios/modules/logging/MLRNLogModule.mm
+index 618bc59..b692f45 100644
+--- a/node_modules/@maplibre/maplibre-react-native/ios/modules/logging/MLRNLogModule.mm
++++ b/node_modules/@maplibre/maplibre-react-native/ios/modules/logging/MLRNLogModule.mm
+@@ -33,7 +33,14 @@ - (void)logging:(nonnull id)logging
+                   filePath:(nonnull NSString *)filePath
+                       line:(NSUInteger)line
+                    message:(nonnull NSString *)message {
+-  [self emitOnLog:@{@"level" : level, @"tag" : filePath, @"message" : message}];
++  // MapLibre подставляет текст сообщения как строку формата: если в нём есть «%»
++  // (адрес тайла с закодированными параметрами), сообщение приходит пустым, и
++  // словарь с nil роняет приложение. Пустое — заменяем, а не падаем.
++  [self emitOnLog:@{
++    @"level" : level ?: @"unknown",
++    @"tag" : filePath ?: @"",
++    @"message" : message ?: @"(сообщение MapLibre не разобрано)"
++  }];
+ }
+ 
+ @end

@@ -76,6 +76,8 @@ interface RadarMapProps {
   riderPosition: { lat: number; lon: number; distanceKm: number } | null;
   // Модельное поле облачности — на моменты, куда не достаёт снимок.
   cloudField: CloudField | null;
+  // Прогноз дождя — на моменты, куда не достаёт радар.
+  rainField: CloudField | null;
   // Кадр спутника на отображаемый момент; null — момент вне архива снимков.
   satelliteFrame: Date | null;
   layers: MapLayers;
@@ -88,9 +90,12 @@ interface RadarMapProps {
 
 const ZOOM_STEP = 1;
 const MIN_ZOOM = 2;
-// Выше родного разрешения снимка (~2 км) поднимать некуда: дальше карта только
-// растягивает те же пиксели. Weather&Radar по той же причине держит потолок 10.
-const MAX_ZOOM = 11;
+// Потолок — улицы у маршрута. Погодные растры (радар, снимок, прогноз) дальше
+// своего разрешения не детализируются, карта просто растягивает их мягким
+// пятном; зато векторная подложка с дорогами остаётся резкой — велосипедисту
+// важнее видеть, по какой улице пройдёт трек. Тайлы OpenFreeMap — до z14,
+// выше MapLibre дорисовывает их из того же тайла без потери резкости.
+const MAX_ZOOM = 15;
 
 const EDGE_PADDING = { top: 150, right: 60, bottom: 280, left: 60 };
 const LABEL_COUNT = 5;
@@ -270,6 +275,7 @@ export const RadarMap = forwardRef<RadarMapHandle, RadarMapProps>(
       radarOpacity,
       riderPosition,
       cloudField,
+      rainField,
       satelliteFrame,
       layers,
       defaultRegion,
@@ -438,6 +444,30 @@ export const RadarMap = forwardRef<RadarMapHandle, RadarMapProps>(
             />
           </RasterSource>
         )}
+
+        {/* Дальше радара — прогноз дождя той же шкалой цветов и на том же месте
+            в стопке слоёв: над облаками, под дорогами. Картинок по одной на
+            сетку, от грубой к мелкой. */}
+        {layers.rain &&
+          !radarFrame &&
+          rainField?.images.map((image, i) => {
+            const id = `rain-${rainField.key.replace(/[^a-zA-Z0-9]+/g, "-")}-${i}`;
+            return (
+              <ImageSource
+                key={id}
+                id={id}
+                url={image.uri}
+                coordinates={image.coordinates}
+              >
+                <Layer
+                  id={`${id}-layer`}
+                  type="raster"
+                  beforeId={RADAR_ANCHOR_LAYER}
+                  paint={{ "raster-opacity": radarOpacity }}
+                />
+              </ImageSource>
+            );
+          })}
 
         {chunks.length > 0 && (
           <GeoJSONSource id="route-src" data={routeGeoJson}>
